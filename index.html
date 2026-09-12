@@ -2,10 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Zombie Survival Radar</title>
   <style>
     * {
       box-sizing: border-box;
+      -webkit-font-smoothing: antialiased;
     }
 
     body {
@@ -24,33 +26,38 @@
       position: absolute;
       bottom: 24px;
       right: 24px;
-      width: 240px;
-      background: #0d120d;
+      width: 250px;
+      background: rgba(10, 15, 10, 0.96);
       border: 3px solid #00FF66;
-      border-radius: 18px;
-      box-shadow: 0 0 24px rgba(0, 0, 0, 0.95), 0 0 12px rgba(0, 255, 102, 0.5);
+      border-radius: 20px;
+      box-shadow: 0 0 25px rgba(0, 0, 0, 1), 0 0 14px rgba(0, 255, 102, 0.6);
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 10px 10px 12px 10px;
+      padding: 12px 10px;
       z-index: 100;
     }
 
     .hud-title {
       font-family: "Arial Black", Impact, sans-serif;
-      font-size: 20px;
+      font-size: 21px;
       font-weight: 900;
       color: #FF0033;
       text-transform: uppercase;
       letter-spacing: 2px;
       margin-bottom: 8px;
-      text-shadow: 0 0 10px rgba(255, 0, 51, 0.7), 0 0 20px rgba(0, 0, 0, 0.9);
+      text-shadow: 0 0 8px rgba(255, 0, 51, 0.8), 0 2px 4px #000;
+      -webkit-text-stroke: 1px #400000;
     }
 
+    /* Crisp Canvas Display Dimensions */
     canvas {
+      width: 210px;
+      height: 210px;
       border-radius: 50%;
-      border: 2px solid rgba(0, 255, 102, 0.7);
-      background: radial-gradient(circle, #09210e 0%, #030804 100%);
+      border: 2px solid rgba(0, 255, 102, 0.8);
+      background: radial-gradient(circle, #081d0d 0%, #020703 100%);
+      box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.8);
     }
 
     .telemetry-bar {
@@ -69,58 +76,65 @@
 
     .telemetry-label {
       font-size: 11px;
-      font-weight: 800;
+      font-weight: 900;
       letter-spacing: 1.5px;
-      color: #72a87c;
+      color: #7ab886;
       text-transform: uppercase;
+      text-shadow: 0 1px 2px #000;
     }
 
     .telemetry-val {
-      font-size: 20px;
+      font-size: 23px;
       font-weight: 900;
       color: #00FF66;
-      text-shadow: 0 0 6px rgba(0, 255, 102, 0.6);
+      text-shadow: 0 0 8px rgba(0, 255, 102, 0.8), 0 2px 4px #000;
       font-family: "Arial Black", Impact, sans-serif;
     }
 
+    /* Outbreak Alert Banner - Moved higher up to create clean spacing */
     #stream-alert-box {
       display: none;
       position: absolute;
-      bottom: 330px;
+      bottom: 375px;
       right: 24px;
-      width: 300px;
-      background: rgba(180, 0, 20, 0.95);
-      border: 3px solid #FF0033;
-      border-radius: 12px;
-      padding: 12px 14px;
+      width: 310px;
+      background: rgba(180, 0, 20, 0.98);
+      border: 3.5px solid #FF0033;
+      border-radius: 14px;
+      padding: 14px 16px;
       text-align: center;
-      box-shadow: 0 0 30px rgba(255, 0, 51, 0.8), 0 0 15px #000;
+      box-shadow: 0 0 35px rgba(255, 0, 51, 0.9), 0 0 20px #000;
       animation: pulse 0.4s infinite alternate;
       z-index: 101;
     }
 
     .alert-main {
-      font-size: 20px;
+      font-size: 21px;
       font-weight: 900;
       color: #FFFFFF;
-      text-shadow: 0 0 10px #000;
+      text-shadow: 0 0 12px #000, 0 2px 4px #000;
       letter-spacing: 1.5px;
       font-family: "Arial Black", Impact, sans-serif;
+      -webkit-text-stroke: 1px #000;
     }
 
     .alert-timer {
-      font-size: 28px;
+      font-size: 32px;
       font-weight: 900;
       color: #FFF;
       font-family: "Arial Black", Impact, sans-serif;
       margin: 4px 0;
+      text-shadow: 0 0 14px #000, 0 2px 5px #000;
+      -webkit-text-stroke: 1.5px #000;
     }
 
     .alert-sub {
-      font-size: 14px;
-      font-weight: 800;
+      font-size: 15px;
+      font-weight: 900;
       color: #FFE600;
       letter-spacing: 1px;
+      text-shadow: 0 0 8px #000, 0 2px 3px #000;
+      -webkit-text-stroke: 0.5px #000;
     }
 
     @keyframes pulse {
@@ -139,11 +153,11 @@
 
   <div id="hud-container">
     <div class="hud-title">ZOMBIE ESCAPE</div>
-    <canvas id="radar" width="200" height="200"></canvas>
+    <canvas id="radar"></canvas>
     <div class="telemetry-bar">
       <div class="telemetry-item">
         <span class="telemetry-label">SPEED</span>
-        <span class="telemetry-val"><span id="speed-val">0.0</span> <span style="font-size: 13px;">MPH</span></span>
+        <span class="telemetry-val"><span id="speed-val">0.0</span> <span style="font-size: 14px;">MPH</span></span>
       </div>
       <div class="telemetry-item">
         <span class="telemetry-label">HORDE</span>
@@ -167,7 +181,7 @@
     let hordeDeadline = null;
     let sprinterDeadline = null;
     let isZombieState = false;
-    let isDustingZombies = false; // Escape visual trigger
+    let isDustingZombies = false;
 
     const canvas = document.getElementById('radar');
     const ctx = canvas.getContext('2d');
@@ -177,6 +191,13 @@
     const alertTitle = document.getElementById('alert-title');
     const alertTimer = document.getElementById('alert-timer');
     const alertDesc = document.getElementById('alert-desc');
+
+    // --- HIGH-DPI RETINA SCALING (ELIMINATES BLUR) ---
+    const dpr = window.devicePixelRatio || 2;
+    const displaySize = 210;
+    canvas.width = displaySize * dpr;
+    canvas.height = displaySize * dpr;
+    ctx.scale(dpr, dpr);
 
     // --- SILENT PRELOAD AUDIO PIPELINE ---
     function createTrack(filename, loop = false) {
@@ -191,7 +212,6 @@
     const musicChase = createTrack('chase.m4a', true);
     const voiceEvil = createTrack('evil_voice.m4a');
 
-    // Primed muted to prevent initial overlapping audio blast
     [sfxDunn, musicChase, voiceEvil].forEach(track => {
       track.muted = true;
       const p = track.play();
@@ -214,7 +234,7 @@
       }
     }
 
-    // --- HARDWARE GPS TELEMETRY ---
+    // --- GPS HARDWARE ---
     let lastGpsLat = null;
     let lastGpsLon = null;
 
@@ -256,13 +276,11 @@
       const isSprinter = forceSprinter || (Math.random() < 0.03);
       const isAmbush = isSprinter ? false : (Math.random() < 0.20);
       
-      // Keep rear pack well spread out in an arc behind you
       const relAngle = isAmbush 
         ? (Math.random() - 0.5) * (Math.PI / 2) 
         : Math.PI + (Math.random() - 0.5) * 1.8;
 
-      // Unique holding distance for each zombie so they don't bunch into a clump
-      const personalHoldDist = 38 + Math.random() * 26; // Follows 38m - 64m back
+      const personalHoldDist = 38 + Math.random() * 26;
 
       zombies.push({
         id: Date.now() + Math.random(),
@@ -305,9 +323,9 @@
       musicChase.play().catch(() => {});
 
       alertBox.style.display = "block";
-      alertBox.style.background = "rgba(0, 40, 180, 0.95)";
+      alertBox.style.background = "rgba(0, 40, 180, 0.98)";
       alertBox.style.borderColor = "#00D9FF";
-      alertBox.style.boxShadow = "0 0 30px rgba(0, 217, 255, 0.8), 0 0 15px #000";
+      alertBox.style.boxShadow = "0 0 35px rgba(0, 217, 255, 0.9), 0 0 15px #000";
       alertTitle.innerText = "⚡ BLUE SPRINTER DETECTED ⚡";
       alertDesc.innerText = "SPRINT > 17 MPH TO ESCAPE!";
       alertDesc.style.color = "#00E5FF";
@@ -321,32 +339,26 @@
       const dt = (now - lastTime) / 1000;
       lastTime = now;
 
-      // Heading smoothing
       let diff = player.targetHeading - player.headingRad;
       while (diff < -Math.PI) diff += Math.PI * 2;
       while (diff > Math.PI) diff -= Math.PI * 2;
       player.headingRad += diff * 0.05;
 
-      // Distance & Swarm Mechanics
       zombies.forEach((z) => {
         if (isDustingZombies) {
-          // ESCAPED: Rapidly drop behind and disappear off radar edge
-          z.dist += (35 + Math.random() * 20) * dt;
+          z.dist += (38 + Math.random() * 22) * dt;
           return;
         }
 
         if (isSprinterActive) {
-          // Sprinter actively sprints to zero distance over the 20-second clock
           const progress = Math.max(0, (sprinterDeadline - Date.now()) / (20 * 1000));
           const targetDist = z.type === 'sprinter' ? (progress * 55) : (progress * z.targetHoldDist);
           z.dist += (targetDist - z.dist) * (0.08);
         } else if (isHordeActive) {
-          // Horde actively closes in from 45s down to 0s
           const progress = Math.max(0, (hordeDeadline - Date.now()) / (HORDE_TIME_LIMIT_SEC * 1000));
           const targetDist = progress * (z.targetHoldDist + 5);
           z.dist += (targetDist - z.dist) * (0.06);
         } else {
-          // PRE-HORDE: Maintain comfortable holding gap behind player
           if (z.mode === 'charge') {
             z.dist -= 18 * dt;
             if (z.dist <= z.targetHoldDist) {
@@ -354,9 +366,8 @@
               z.relAngle = Math.PI + (Math.random() - 0.5) * 1.2;
             }
           } else {
-            // Smoothly ease to trailing distance
             z.dist += (z.targetHoldDist - z.dist) * (0.04);
-            if (z.dist < 28) z.dist = 28; // Strict minimum gap before horde starts
+            if (z.dist < 28) z.dist = 28;
           }
         }
       });
@@ -367,7 +378,6 @@
     }
 
     function handleGameState() {
-      // 1. INFECTED: Mechanical restart throttle (Speed > 14 MPH)
       if (isZombieState) {
         if (player.speedMph >= RESTART_TRIGGER_MPH) {
           resetBoard();
@@ -375,7 +385,6 @@
         return;
       }
 
-      // 2. BLUE SPRINTER ESCAPE CHECK
       if (isSprinterActive) {
         const remainingMs = sprinterDeadline - Date.now();
         const remSec = Math.max(0, Math.ceil(remainingMs / 1000));
@@ -392,15 +401,14 @@
         return;
       }
 
-      // 3. HORDE ESCAPE CHECK (10+ Zombies)
       if (zombies.length >= HORDE_TRIGGER_COUNT && !isHordeActive && !isDustingZombies) {
         isHordeActive = true;
         hordeDeadline = Date.now() + (HORDE_TIME_LIMIT_SEC * 1000);
 
         alertBox.style.display = "block";
-        alertBox.style.background = "rgba(180, 0, 20, 0.95)";
+        alertBox.style.background = "rgba(180, 0, 20, 0.98)";
         alertBox.style.borderColor = "#FF0033";
-        alertBox.style.boxShadow = "0 0 30px rgba(255, 0, 51, 0.8), 0 0 15px #000";
+        alertBox.style.boxShadow = "0 0 35px rgba(255, 0, 51, 0.9), 0 0 20px #000";
         alertTitle.innerText = "⚠ HORDE OUTBREAK ⚠";
         alertDesc.innerText = "SPRINT > 15 MPH TO ESCAPE!";
         alertDesc.style.color = "#FFE600";
@@ -416,13 +424,11 @@
         const secs = totalSec % 60;
         alertTimer.innerText = (mins < 10 ? "0" : "") + mins + ":" + (secs < 10 ? "0" : "") + secs;
 
-        // Met escape speed: fling zombies backward off the screen
         if (player.speedMph >= HORDE_ESCAPE_MPH && !isDustingZombies) {
           triggerEscapeSequence("✓ ESCAPED", "LEFT IN THE DUST!");
           return;
         }
 
-        // Timer hit zero: horde overruns the center
         if (totalSec <= 0 && !isDustingZombies) {
           triggerInfectionFail();
         }
@@ -438,7 +444,6 @@
       alertDesc.innerText = descText;
       alertTimer.innerText = "CLEARED";
 
-      // 1.8 seconds of visual acceleration away before wiping the array
       setTimeout(() => {
         resetBoard();
       }, 1800);
@@ -477,14 +482,14 @@
       musicChase.currentTime = 0;
     }
 
-    // --- RADAR RENDER ---
+    // --- CRISP RADAR RENDER ---
     function renderRadar() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const cx = canvas.width / 2;
-      const cy = canvas.height / 2;
+      ctx.clearRect(0, 0, displaySize, displaySize);
+      const cx = displaySize / 2;
+      const cy = displaySize / 2;
 
       // Range rings
-      ctx.strokeStyle = "rgba(0, 255, 102, 0.4)";
+      ctx.strokeStyle = "rgba(0, 255, 102, 0.45)";
       ctx.lineWidth = 1.5;
       [30, 60, 90].forEach(r => {
         ctx.beginPath();
@@ -492,29 +497,29 @@
         ctx.stroke();
       });
 
-      // Directional arrow (Top is forward)
-      ctx.strokeStyle = "rgba(0, 255, 102, 0.7)";
-      ctx.lineWidth = 2;
+      // Directional arrow
+      ctx.strokeStyle = "rgba(0, 255, 102, 0.85)";
+      ctx.lineWidth = 2.5;
       ctx.beginPath();
       ctx.moveTo(cx, 8);
-      ctx.lineTo(cx, 16);
+      ctx.lineTo(cx, 18);
       ctx.stroke();
 
       // Sweeper
       scanAngle += 0.045;
       ctx.strokeStyle = "#00FF66";
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2.2;
       ctx.beginPath();
       ctx.moveTo(cx, cy);
       ctx.lineTo(cx + Math.cos(scanAngle) * (cx - 8), cy + Math.sin(scanAngle) * (cy - 8));
       ctx.stroke();
 
-      // Player Indicator (Cyan if alive, Crimson if infected)
+      // Center Player Indicator
       ctx.fillStyle = isZombieState ? "#FF0033" : "#00E5FF";
       ctx.shadowColor = ctx.fillStyle;
-      ctx.shadowBlur = 8;
+      ctx.shadowBlur = 10;
       ctx.beginPath();
-      ctx.arc(cx, cy, 4.5, 0, Math.PI * 2);
+      ctx.arc(cx, cy, 5.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
 
@@ -529,13 +534,13 @@
           if (z.type === 'sprinter') {
             ctx.fillStyle = "#00F0FF";
             ctx.shadowColor = "#00F0FF";
-            ctx.shadowBlur = 14;
-            ctx.arc(x, y, 7.5, 0, Math.PI * 2);
+            ctx.shadowBlur = 16;
+            ctx.arc(x, y, 8, 0, Math.PI * 2);
           } else {
             ctx.fillStyle = "#FF0033";
             ctx.shadowColor = "#FF0033";
-            ctx.shadowBlur = 10;
-            ctx.arc(x, y, 6, 0, Math.PI * 2);
+            ctx.shadowBlur = 12;
+            ctx.arc(x, y, 6.5, 0, Math.PI * 2);
           }
           ctx.fill();
           ctx.shadowBlur = 0;

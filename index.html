@@ -27,6 +27,7 @@
       flex-direction: column;
       align-items: center;
       padding-top: 8px;
+      cursor: pointer;
     }
 
     canvas {
@@ -71,6 +72,7 @@
       text-shadow: 0 0 20px #000, 0 0 30px #FF0033;
       animation: pulse 0.4s infinite alternate;
       letter-spacing: 3px;
+      text-align: center;
     }
 
     @keyframes pulse {
@@ -87,7 +89,7 @@
   </div>
 
   <!-- Minimap HUD Widget -->
-  <div id="hud-container">
+  <div id="hud-container" title="Tap to test spawn">
     <canvas id="radar" width="180" height="180"></canvas>
     <div class="telemetry-bar">
       <span>SPD: <span id="speed-val">0.0</span> MPH</span>
@@ -97,7 +99,7 @@
 
   <script>
     // --- 1. CONFIGURATION ---
-    const KICK_CHATROOM_ID = "2211151"; // Fill in your Kick Chatroom ID
+    const KICK_CHATROOM_ID = "2211151";
     const ESCAPE_SPEED_MPH = 14.0;
     const DANGER_DISTANCE_METERS = 35.0;
 
@@ -112,7 +114,7 @@
     const dangerScreen = document.getElementById('danger-screen');
     const chaseText = document.getElementById('chase-text');
 
-    // --- 2. AUDIO SYNTHESIZER (No external MP3 files needed) ---
+    // --- 2. AUDIO SYNTHESIZER ---
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     function playAlarmDrone(highPitch = false) {
       if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -137,7 +139,6 @@
           player.lon = pos.coords.longitude;
           player.heading = pos.coords.heading || 0;
 
-          // Convert m/s to mph
           const rawSpeed = pos.coords.speed || 0;
           player.speedMph = parseFloat((rawSpeed * 2.23694).toFixed(1));
           speedEl.innerText = player.speedMph;
@@ -149,7 +150,7 @@
       );
     }
 
-// --- 4. DISTANCE CALCULATION (Haversine Formula) ---
+    // --- 4. DISTANCE & SPAWN ENGINE ---
     function getDistanceMeters(lat1, lon1, lat2, lon2) {
       const R = 6371000;
       const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -160,12 +161,10 @@
       return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
-    // Fallback default coordinates (e.g. Detroit area) if indoors without satellite lock
     function spawnZombie(type = "normal") {
       const currentLat = player.lat || 42.3314;
       const currentLon = player.lon || -83.0458;
       
-      // Spawn within 40 to 70 meters
       const radiusMeters = 40 + Math.random() * 30;
       const angle = Math.random() * Math.PI * 2;
       const dLat = (radiusMeters * Math.cos(angle)) / 111320;
@@ -182,49 +181,62 @@
       playAlarmDrone(false);
     }
 
-    // --- 5. KICK CHAT INTEGRATION (!zombie) ---
-    if (KICK_CHATROOM_ID && KICK_CHATROOM_ID !== "YOUR_CHATROOM_ID_HERE") {
-      const pusher = new Pusher('32cbd69e4b950ba42379', {
-        cluster: 'us2',
-        wsHost: 'ws-us2.pusher.com',
-        wsPort: 443,
-        wssPort: 443,
-        forceTLS: true,
-        enabledTransports: ['ws', 'wss']
-      });
+    // --- 5. UNIVERSAL KICK CHAT INTEGRATION ---
+    const pusher = new Pusher('32cbd69e4b950ba42379', {
+      cluster: 'us2',
+      wsHost: 'ws-us2.pusher.com',
+      wsPort: 443,
+      wssPort: 443,
+      forceTLS: true,
+      enabledTransports: ['ws', 'wss']
+    });
 
-      const channel = pusher.subscribe(`chatrooms.${KICK_CHATROOM_ID}.v2`);
+    pusher.connection.bind('connected', () => {
+      countEl.style.color = '#00FF66';
+    });
+    pusher.connection.bind('unavailable', () => {
+      countEl.style.color = '#FF0033';
+    });
 
-      // Connection status debug
-      pusher.connection.bind('connected', () => {
-        countEl.style.color = '#00FF66';
-      });
+    function handleIncomingChat(raw) {
+      try {
+        const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        const text = (data.content || data.message || '').trim().toLowerCase();
 
-      channel.bind('App\\Events\\ChatMessageEvent', (raw) => {
-        try {
-          // Handle both parsed and unparsed Pusher event payloads safely
-          const msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
-          const text = (msg.content || '').trim().toLowerCase();
-
-          if (text.includes('!zombie')) {
-            spawnZombie("fast");
-          }
-        } catch (err) {
-          console.error("Chat Parse Error:", err);
+        if (text.includes('!zombie')) {
+          spawnZombie("fast");
         }
-      });
+      } catch (e) {}
     }
 
-    // --- 6. GAME LOOP & CHASE MECHANICS ---
+    // Subscribe to both current channel variations
+    const chV2 = pusher.subscribe(`chatrooms.${KICK_CHATROOM_ID}.v2`);
+    const chV1 = pusher.subscribe(`chatroom_${KICK_CHATROOM_ID}`);
+
+    ['App\\Events\\ChatMessageEvent', 'ChatMessageEvent'].forEach(evt => {
+      chV2.bind(evt, handleIncomingChat);
+      chV1.bind(evt, handleIncomingChat);
+    });
+
+    chV2.bind_global((eventName, data) => {
+      if (eventName.toLowerCase().includes('chat')) {
+        handleIncomingChat(data);
+      }
+    });
+
+    // --- 6. TAP-TO-TEST TRIGGER ---
+    document.getElementById('hud-container').addEventListener('click', () => {
+      spawnZombie("fast");
+    });
+
+    // --- 7. GAME LOOP & ESCAPE MECHANICS ---
     function evaluateSurvivalState() {
       let nearestDist = Infinity;
 
-      // Zombies slowly crawl toward the player
       zombies.forEach((z) => {
         const dist = getDistanceMeters(player.lat, player.lon, z.lat, z.lon);
         if (dist < nearestDist) nearestDist = dist;
 
-        // Move zombie closer
         const step = 0.00003; 
         z.lat += (player.lat - z.lat) * step;
         z.lon += (player.lon - z.lon) * step;
@@ -232,16 +244,13 @@
 
       countEl.innerText = zombies.length;
 
-      // Check proximity danger
       if (nearestDist < DANGER_DISTANCE_METERS) {
         isUnderAttack = true;
         dangerScreen.style.borderWidth = "25px";
         chaseText.style.display = "block";
         playAlarmDrone(true);
 
-        // Escape by sprinting fast enough
         if (player.speedMph >= ESCAPE_SPEED_MPH) {
-          // Outran the horde - remove nearest zombie
           zombies = zombies.filter(z => getDistanceMeters(player.lat, player.lon, z.lat, z.lon) > DANGER_DISTANCE_METERS);
         }
       } else {
@@ -251,7 +260,7 @@
       }
     }
 
-    // --- 7. RADAR RENDERING ---
+    // --- 8. RADAR RENDERING ---
     let scanAngle = 0;
     function drawRadar() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -259,7 +268,6 @@
       const cy = canvas.height / 2;
       const radarMaxMeters = 100.0;
 
-      // Concentric range rings
       ctx.strokeStyle = "rgba(0, 255, 102, 0.25)";
       ctx.lineWidth = 1;
       [30, 60, 90].forEach(r => {
@@ -268,7 +276,6 @@
         ctx.stroke();
       });
 
-      // Rotating scan line
       scanAngle += 0.04;
       ctx.strokeStyle = "rgba(0, 255, 102, 0.4)";
       ctx.beginPath();
@@ -276,13 +283,11 @@
       ctx.lineTo(cx + Math.cos(scanAngle) * (cx - 5), cy + Math.sin(scanAngle) * (cy - 5));
       ctx.stroke();
 
-      // Player center blip (Blue)
       ctx.fillStyle = "#00E5FF";
       ctx.beginPath();
       ctx.arc(cx, cy, 4, 0, Math.PI * 2);
       ctx.fill();
 
-      // Plot Zombies (Red blips)
       zombies.forEach(z => {
         const d = getDistanceMeters(player.lat, player.lon, z.lat, z.lon);
         if (d <= radarMaxMeters) {

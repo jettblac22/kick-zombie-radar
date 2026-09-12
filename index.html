@@ -19,7 +19,7 @@
       user-select: none;
     }
 
-    /* Pinned Bottom-Right Corner */
+    /* Pinned Bottom-Right */
     #hud-container {
       position: absolute;
       bottom: 24px;
@@ -33,7 +33,6 @@
       flex-direction: column;
       align-items: center;
       padding: 10px 10px 12px 10px;
-      cursor: pointer;
       z-index: 100;
     }
 
@@ -84,7 +83,6 @@
       font-family: "Arial Black", Impact, sans-serif;
     }
 
-    /* Outbreak Alert Banner Pinned Above Bottom-Right HUD */
     #stream-alert-box {
       display: none;
       position: absolute;
@@ -116,7 +114,6 @@
       color: #FFF;
       font-family: "Arial Black", Impact, sans-serif;
       margin: 4px 0;
-      text-shadow: 0 0 12px #000;
     }
 
     .alert-sub {
@@ -134,15 +131,13 @@
 </head>
 <body>
 
-  <!-- Bottom-Right Stream Alert -->
   <div id="stream-alert-box">
     <div class="alert-main" id="alert-title">⚠ HORDE OUTBREAK ⚠</div>
     <div class="alert-timer" id="alert-timer">00:45</div>
     <div class="alert-sub" id="alert-desc">SPRINT > 15 MPH TO ESCAPE!</div>
   </div>
 
-  <!-- Bottom-Right Cockpit HUD -->
-  <div id="hud-container" title="Single Tap: Unlock Audio & Spawn | Triple Tap: Sprinter">
+  <div id="hud-container">
     <div class="hud-title">ZOMBIE ESCAPE</div>
     <canvas id="radar" width="200" height="200"></canvas>
     <div class="telemetry-bar">
@@ -160,7 +155,7 @@
   <script>
     const HORDE_TRIGGER_COUNT = 10;
     const HORDE_ESCAPE_MPH = 15.0;
-    const HORDE_TIME_LIMIT_SEC = 45; // Reduced to 45 seconds
+    const HORDE_TIME_LIMIT_SEC = 45;
     const SPRINTER_ESCAPE_MPH = 17.0;
     const RESTART_TRIGGER_MPH = 14.0;
     const RADAR_MAX_METERS = 100.0;
@@ -182,66 +177,39 @@
     const alertTimer = document.getElementById('alert-timer');
     const alertDesc = document.getElementById('alert-desc');
 
-    // --- ROBUST WEB AUDIO BUFFER ENGINE ---
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    let audioCtx = null;
-    let audioBuffers = { dunn: null, chase: null, evil: null };
-    let chaseSourceNode = null;
-    let isChasePlaying = false;
+    // --- AUTOMATIC AUDIO ENGINE (NO CLICK REQUIRED) ---
+    function createTrack(filename, loop = false) {
+      const a = new Audio(filename);
+      a.preload = 'auto';
+      a.loop = loop;
+      a.playsInline = true;
+      return a;
+    }
 
-    async function loadSoundBuffer(url) {
-      try {
-        const response = await fetch(url);
-        const arrayBuffer = await response.arrayBuffer();
-        return await audioCtx.decodeAudioData(arrayBuffer);
-      } catch (err) {
-        console.warn("Failed loading audio buffer for: " + url, err);
-        return null;
+    const sfxDunn = createTrack('dunn.m4a');
+    const musicChase = createTrack('chase.m4a', true);
+    const voiceEvil = createTrack('evil_voice.m4a');
+
+    // Auto-unlock tracks in the background on load
+    [sfxDunn, musicChase, voiceEvil].forEach(track => {
+      const p = track.play();
+      if (p !== undefined) {
+        p.then(() => {
+          track.pause();
+          track.currentTime = 0;
+        }).catch(() => {});
+      }
+    });
+
+    function playSound(track) {
+      track.currentTime = 0;
+      const p = track.play();
+      if (p !== undefined) {
+        p.catch(e => console.warn('Audio auto-play prevented:', e));
       }
     }
 
-    async function initAudioEngine() {
-      if (!audioCtx) {
-        audioCtx = new AudioContextClass();
-      }
-      if (audioCtx.state === 'suspended') {
-        await audioCtx.resume();
-      }
-      if (!audioBuffers.dunn) {
-        audioBuffers.dunn = await loadSoundBuffer('dunn.m4a');
-        audioBuffers.chase = await loadSoundBuffer('chase.m4a');
-        audioBuffers.evil = await loadSoundBuffer('evil_voice.m4a');
-      }
-    }
-
-    function playSoundBuffer(buffer, loop = false) {
-      if (!audioCtx || !buffer) return null;
-      if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
-      }
-      const source = audioCtx.createBufferSource();
-      source.buffer = buffer;
-      source.loop = loop;
-      source.connect(audioCtx.destination);
-      source.start(0);
-      return source;
-    }
-
-    function startChaseMusic() {
-      if (isChasePlaying || !audioBuffers.chase) return;
-      chaseSourceNode = playSoundBuffer(audioBuffers.chase, true);
-      isChasePlaying = true;
-    }
-
-    function stopChaseMusic() {
-      if (chaseSourceNode && isChasePlaying) {
-        try { chaseSourceNode.stop(); } catch(e){}
-        chaseSourceNode = null;
-      }
-      isChasePlaying = false;
-    }
-
-    // --- HARDWARE GPS TELEMETRY ---
+    // --- GPS HARDWARE ---
     let lastGpsLat = null;
     let lastGpsLon = null;
 
@@ -276,22 +244,19 @@
       );
     }
 
-    // --- SPAWNING LOGIC ---
-    function spawnZombieEntity(forceSprinter = false) {
+    // --- AUTOMATIC SPAWNING ---
+    function spawnZombie(forceSprinter = false) {
       if (isZombieState) return;
 
       const isSprinter = forceSprinter || (Math.random() < 0.03);
       const isAmbush = isSprinter ? false : (Math.random() < 0.20);
-
       const relAngle = isAmbush 
         ? (Math.random() - 0.5) * (Math.PI / 2) 
         : Math.PI + (Math.random() - 0.5) * 1.4;
 
-      const spawnDist = 75 + Math.random() * 20;
-
       zombies.push({
         id: Date.now() + Math.random(),
-        dist: spawnDist,
+        dist: 75 + Math.random() * 20,
         relAngle: relAngle,
         mode: isAmbush ? 'charge' : 'chase',
         speed: isSprinter ? 0.24 : (isAmbush ? 0.28 : 0.075),
@@ -299,36 +264,35 @@
       });
 
       countEl.innerText = zombies.length;
-      playSoundBuffer(audioBuffers.dunn);
+      playSound(sfxDunn);
 
       if (isSprinter && !isSprinterActive) {
-        triggerSprinterMode();
+        triggerSprinter();
       }
     }
 
-    function triggerZombieSpawnEvent() {
+    function triggerHordeSpawn() {
       const isPack = Math.random() < 0.10;
       const count = isPack ? 3 : 1;
       for (let i = 0; i < count; i++) {
-        spawnZombieEntity();
+        spawnZombie();
       }
     }
 
-    // Spawn loop: 15 to 50 seconds
-    function scheduleNextSpawn() {
-      const nextDelayMs = (15 + Math.random() * 35) * 1000;
+    function scheduleSpawn() {
       setTimeout(() => {
-        triggerZombieSpawnEvent();
-        scheduleNextSpawn();
-      }, nextDelayMs);
+        triggerHordeSpawn();
+        scheduleSpawn();
+      }, (15 + Math.random() * 35) * 1000);
     }
-    scheduleNextSpawn();
+    scheduleSpawn();
 
-    function triggerSprinterMode() {
+    function triggerSprinter() {
       isSprinterActive = true;
       sprinterDeadline = Date.now() + (20 * 1000);
 
-      startChaseMusic();
+      musicChase.currentTime = 0;
+      musicChase.play().catch(() => {});
 
       alertBox.style.display = "block";
       alertBox.style.background = "rgba(0, 40, 180, 0.95)";
@@ -339,24 +303,6 @@
       alertDesc.style.color = "#00E5FF";
     }
 
-    // Tap Handling (1 tap = spawn & audio unlock, 3 rapid taps = force blue sprinter)
-    let tapCount = 0;
-    let tapTimeout = null;
-    document.getElementById('hud-container').addEventListener('click', async () => {
-      await initAudioEngine();
-      tapCount++;
-
-      clearTimeout(tapTimeout);
-      tapTimeout = setTimeout(() => {
-        if (tapCount === 1) {
-          triggerZombieSpawnEvent();
-        } else if (tapCount >= 3) {
-          spawnZombieEntity(true);
-        }
-        tapCount = 0;
-      }, 300);
-    });
-
     // --- GAME ENGINE LOOP ---
     let lastTime = performance.now();
     let scanAngle = 0;
@@ -365,11 +311,13 @@
       const dt = (now - lastTime) / 1000;
       lastTime = now;
 
+      // Smooth heading lerp
       let diff = player.targetHeading - player.headingRad;
       while (diff < -Math.PI) diff += Math.PI * 2;
       while (diff > Math.PI) diff -= Math.PI * 2;
       player.headingRad += diff * 0.05;
 
+      // Move zombies
       zombies.forEach((z) => {
         if (z.mode === 'charge') {
           z.dist -= (z.speed * 60) * dt;
@@ -404,14 +352,15 @@
         return;
       }
 
-      // 2. BLUE SPRINTER STATE (20s limit)
+      // 2. BLUE SPRINTER STATE (20s Limit)
       if (isSprinterActive) {
         const remainingMs = sprinterDeadline - Date.now();
         const remSec = Math.max(0, Math.ceil(remainingMs / 1000));
         alertTimer.innerText = "00:" + (remSec < 10 ? "0" : "") + remSec;
 
         if (player.speedMph >= SPRINTER_ESCAPE_MPH) {
-          stopChaseMusic();
+          musicChase.pause();
+          musicChase.currentTime = 0;
           alertTitle.innerText = "⚡ SPRINTER EVADED ⚡";
           alertDesc.innerText = "BOARD CLEARED!";
           alertTimer.innerText = "ESCAPED";
@@ -438,7 +387,8 @@
         alertDesc.innerText = "SPRINT > 15 MPH TO ESCAPE!";
         alertDesc.style.color = "#FFE600";
 
-        startChaseMusic();
+        musicChase.currentTime = 0;
+        musicChase.play().catch(() => {});
       }
 
       if (isHordeActive) {
@@ -449,7 +399,8 @@
         alertTimer.innerText = (mins < 10 ? "0" : "") + mins + ":" + (secs < 10 ? "0" : "") + secs;
 
         if (player.speedMph >= HORDE_ESCAPE_MPH) {
-          stopChaseMusic();
+          musicChase.pause();
+          musicChase.currentTime = 0;
           alertTitle.innerText = "✓ ESCAPED";
           alertDesc.innerText = "HORDE EVADED!";
           alertTimer.innerText = "CLEARED";
@@ -468,8 +419,9 @@
       isHordeActive = false;
       isSprinterActive = false;
 
-      stopChaseMusic();
-      playSoundBuffer(audioBuffers.evil);
+      musicChase.pause();
+      musicChase.currentTime = 0;
+      playSound(voiceEvil);
 
       alertBox.style.display = "block";
       alertBox.style.background = "rgba(70, 0, 0, 0.98)";
@@ -489,10 +441,11 @@
       hordeDeadline = null;
       sprinterDeadline = null;
       alertBox.style.display = "none";
-      stopChaseMusic();
+      musicChase.pause();
+      musicChase.currentTime = 0;
     }
 
-    // --- RADAR DISPLAY ---
+    // --- RADAR RENDER ---
     function renderRadar() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const cx = canvas.width / 2;

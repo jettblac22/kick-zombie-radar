@@ -19,10 +19,11 @@
       user-select: none;
     }
 
+    /* Pinned Bottom-Right Corner */
     #hud-container {
       position: absolute;
       bottom: 24px;
-      left: 24px;
+      right: 24px;
       width: 240px;
       background: #0d120d;
       border: 3px solid #00FF66;
@@ -83,12 +84,13 @@
       font-family: "Arial Black", Impact, sans-serif;
     }
 
+    /* Outbreak Alert Banner Pinned Above Bottom-Right HUD */
     #stream-alert-box {
       display: none;
       position: absolute;
       bottom: 330px;
-      left: 24px;
-      width: 320px;
+      right: 24px;
+      width: 300px;
       background: rgba(180, 0, 20, 0.95);
       border: 3px solid #FF0033;
       border-radius: 12px;
@@ -132,13 +134,15 @@
 </head>
 <body>
 
+  <!-- Bottom-Right Stream Alert -->
   <div id="stream-alert-box">
     <div class="alert-main" id="alert-title">⚠ HORDE OUTBREAK ⚠</div>
-    <div class="alert-timer" id="alert-timer">03:00</div>
+    <div class="alert-timer" id="alert-timer">00:45</div>
     <div class="alert-sub" id="alert-desc">SPRINT > 15 MPH TO ESCAPE!</div>
   </div>
 
-  <div id="hud-container" title="Single Tap: Spawn | Triple Tap: Force Blue Sprinter">
+  <!-- Bottom-Right Cockpit HUD -->
+  <div id="hud-container" title="Single Tap: Unlock Audio & Spawn | Triple Tap: Sprinter">
     <div class="hud-title">ZOMBIE ESCAPE</div>
     <canvas id="radar" width="200" height="200"></canvas>
     <div class="telemetry-bar">
@@ -156,7 +160,7 @@
   <script>
     const HORDE_TRIGGER_COUNT = 10;
     const HORDE_ESCAPE_MPH = 15.0;
-    const HORDE_TIME_LIMIT_SEC = 180; // 3 Minutes
+    const HORDE_TIME_LIMIT_SEC = 45; // Reduced to 45 seconds
     const SPRINTER_ESCAPE_MPH = 17.0;
     const RESTART_TRIGGER_MPH = 14.0;
     const RADAR_MAX_METERS = 100.0;
@@ -178,48 +182,66 @@
     const alertTimer = document.getElementById('alert-timer');
     const alertDesc = document.getElementById('alert-desc');
 
-    // --- BULLETPROOF IOS AUDIO PIPELINE ---
-    function initTrack(filename, loop = false) {
-      const audio = new Audio(filename);
-      audio.preload = 'auto';
-      audio.loop = loop;
-      audio.playsInline = true;
-      return audio;
-    }
+    // --- ROBUST WEB AUDIO BUFFER ENGINE ---
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    let audioCtx = null;
+    let audioBuffers = { dunn: null, chase: null, evil: null };
+    let chaseSourceNode = null;
+    let isChasePlaying = false;
 
-    const sfxDunn = initTrack('dunn.m4a');
-    const musicChase = initTrack('chase.m4a', true);
-    const voiceEvil = initTrack('evil_voice.m4a');
-
-    let audioUnlocked = false;
-
-    // Direct hardware priming for iOS WebKit
-    function primeAudioHardware() {
-      if (audioUnlocked) return;
-      [sfxDunn, musicChase, voiceEvil].forEach(a => {
-        a.muted = true;
-        const p = a.play();
-        if (p !== undefined) {
-          p.then(() => {
-            a.pause();
-            a.currentTime = 0;
-            a.muted = false;
-          }).catch(() => {});
-        }
-      });
-      audioUnlocked = true;
-    }
-
-    function playSound(audio) {
-      audio.pause();
-      audio.currentTime = 0;
-      const p = audio.play();
-      if (p !== undefined) {
-        p.catch(e => console.warn("Playback error:", e));
+    async function loadSoundBuffer(url) {
+      try {
+        const response = await fetch(url);
+        const arrayBuffer = await response.arrayBuffer();
+        return await audioCtx.decodeAudioData(arrayBuffer);
+      } catch (err) {
+        console.warn("Failed loading audio buffer for: " + url, err);
+        return null;
       }
     }
 
-    // --- GPS TELEMETRY ---
+    async function initAudioEngine() {
+      if (!audioCtx) {
+        audioCtx = new AudioContextClass();
+      }
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
+      if (!audioBuffers.dunn) {
+        audioBuffers.dunn = await loadSoundBuffer('dunn.m4a');
+        audioBuffers.chase = await loadSoundBuffer('chase.m4a');
+        audioBuffers.evil = await loadSoundBuffer('evil_voice.m4a');
+      }
+    }
+
+    function playSoundBuffer(buffer, loop = false) {
+      if (!audioCtx || !buffer) return null;
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = loop;
+      source.connect(audioCtx.destination);
+      source.start(0);
+      return source;
+    }
+
+    function startChaseMusic() {
+      if (isChasePlaying || !audioBuffers.chase) return;
+      chaseSourceNode = playSoundBuffer(audioBuffers.chase, true);
+      isChasePlaying = true;
+    }
+
+    function stopChaseMusic() {
+      if (chaseSourceNode && isChasePlaying) {
+        try { chaseSourceNode.stop(); } catch(e){}
+        chaseSourceNode = null;
+      }
+      isChasePlaying = false;
+    }
+
+    // --- HARDWARE GPS TELEMETRY ---
     let lastGpsLat = null;
     let lastGpsLon = null;
 
@@ -254,7 +276,7 @@
       );
     }
 
-    // --- SPAWNER ---
+    // --- SPAWNING LOGIC ---
     function spawnZombieEntity(forceSprinter = false) {
       if (isZombieState) return;
 
@@ -277,7 +299,7 @@
       });
 
       countEl.innerText = zombies.length;
-      playSound(sfxDunn);
+      playSoundBuffer(audioBuffers.dunn);
 
       if (isSprinter && !isSprinterActive) {
         triggerSprinterMode();
@@ -292,6 +314,7 @@
       }
     }
 
+    // Spawn loop: 15 to 50 seconds
     function scheduleNextSpawn() {
       const nextDelayMs = (15 + Math.random() * 35) * 1000;
       setTimeout(() => {
@@ -305,9 +328,7 @@
       isSprinterActive = true;
       sprinterDeadline = Date.now() + (20 * 1000);
 
-      // Blue sprinter immediately drives chase music
-      musicChase.currentTime = 0;
-      musicChase.play().catch(() => {});
+      startChaseMusic();
 
       alertBox.style.display = "block";
       alertBox.style.background = "rgba(0, 40, 180, 0.95)";
@@ -318,11 +339,11 @@
       alertDesc.style.color = "#00E5FF";
     }
 
-    // Tap Logic
+    // Tap Handling (1 tap = spawn & audio unlock, 3 rapid taps = force blue sprinter)
     let tapCount = 0;
     let tapTimeout = null;
-    document.getElementById('hud-container').addEventListener('click', () => {
-      primeAudioHardware();
+    document.getElementById('hud-container').addEventListener('click', async () => {
+      await initAudioEngine();
       tapCount++;
 
       clearTimeout(tapTimeout);
@@ -330,13 +351,13 @@
         if (tapCount === 1) {
           triggerZombieSpawnEvent();
         } else if (tapCount >= 3) {
-          spawnZombieEntity(true); // Triple tap spawns blue sprinter
+          spawnZombieEntity(true);
         }
         tapCount = 0;
       }, 300);
     });
 
-    // --- GAME ENGINE ---
+    // --- GAME ENGINE LOOP ---
     let lastTime = performance.now();
     let scanAngle = 0;
 
@@ -375,7 +396,7 @@
     }
 
     function handleGameState() {
-      // 1. INFECTED: Speed-based restart button
+      // 1. INFECTED: Mechanical restart throttle (Speed > 14 MPH)
       if (isZombieState) {
         if (player.speedMph >= RESTART_TRIGGER_MPH) {
           resetBoard();
@@ -383,15 +404,14 @@
         return;
       }
 
-      // 2. SPRINTER MODE
+      // 2. BLUE SPRINTER STATE (20s limit)
       if (isSprinterActive) {
         const remainingMs = sprinterDeadline - Date.now();
         const remSec = Math.max(0, Math.ceil(remainingMs / 1000));
         alertTimer.innerText = "00:" + (remSec < 10 ? "0" : "") + remSec;
 
-        // Escape sprint
         if (player.speedMph >= SPRINTER_ESCAPE_MPH) {
-          musicChase.pause();
+          stopChaseMusic();
           alertTitle.innerText = "⚡ SPRINTER EVADED ⚡";
           alertDesc.innerText = "BOARD CLEARED!";
           alertTimer.innerText = "ESCAPED";
@@ -399,14 +419,13 @@
           return;
         }
 
-        // 20s Expired without hitting 17 MPH
         if (remSec <= 0) {
           triggerInfectionFail();
         }
         return;
       }
 
-      // 3. HORDE MODE (10+ Zombies)
+      // 3. HORDE MODE (10+ Zombies, 45-Second Countdown)
       if (zombies.length >= HORDE_TRIGGER_COUNT && !isHordeActive) {
         isHordeActive = true;
         hordeDeadline = Date.now() + (HORDE_TIME_LIMIT_SEC * 1000);
@@ -419,8 +438,7 @@
         alertDesc.innerText = "SPRINT > 15 MPH TO ESCAPE!";
         alertDesc.style.color = "#FFE600";
 
-        musicChase.currentTime = 0;
-        musicChase.play().catch(() => {});
+        startChaseMusic();
       }
 
       if (isHordeActive) {
@@ -430,9 +448,8 @@
         const secs = totalSec % 60;
         alertTimer.innerText = (mins < 10 ? "0" : "") + mins + ":" + (secs < 10 ? "0" : "") + secs;
 
-        // Escaped
         if (player.speedMph >= HORDE_ESCAPE_MPH) {
-          musicChase.pause();
+          stopChaseMusic();
           alertTitle.innerText = "✓ ESCAPED";
           alertDesc.innerText = "HORDE EVADED!";
           alertTimer.innerText = "CLEARED";
@@ -440,7 +457,6 @@
           return;
         }
 
-        // Timer Expired
         if (totalSec <= 0) {
           triggerInfectionFail();
         }
@@ -452,12 +468,8 @@
       isHordeActive = false;
       isSprinterActive = false;
 
-      // Stop chase music cleanly
-      musicChase.pause();
-      musicChase.currentTime = 0;
-
-      // Force Evil Voice directly
-      playSound(voiceEvil);
+      stopChaseMusic();
+      playSoundBuffer(audioBuffers.evil);
 
       alertBox.style.display = "block";
       alertBox.style.background = "rgba(70, 0, 0, 0.98)";
@@ -477,8 +489,7 @@
       hordeDeadline = null;
       sprinterDeadline = null;
       alertBox.style.display = "none";
-      musicChase.pause();
-      musicChase.currentTime = 0;
+      stopChaseMusic();
     }
 
     // --- RADAR DISPLAY ---

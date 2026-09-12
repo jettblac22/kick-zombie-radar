@@ -50,8 +50,7 @@
       -webkit-text-stroke: 1px #400000;
     }
 
-    /* Crisp Canvas Display Dimensions */
-    canvas {
+    canvas#radar {
       width: 210px;
       height: 210px;
       border-radius: 50%;
@@ -91,7 +90,6 @@
       font-family: "Arial Black", Impact, sans-serif;
     }
 
-    /* Outbreak Alert Banner - Moved higher up to create clean spacing */
     #stream-alert-box {
       display: none;
       position: absolute;
@@ -192,14 +190,14 @@
     const alertTimer = document.getElementById('alert-timer');
     const alertDesc = document.getElementById('alert-desc');
 
-    // --- HIGH-DPI RETINA SCALING (ELIMINATES BLUR) ---
+    // High-DPI Canvas Scaling
     const dpr = window.devicePixelRatio || 2;
     const displaySize = 210;
     canvas.width = displaySize * dpr;
     canvas.height = displaySize * dpr;
     ctx.scale(dpr, dpr);
 
-    // --- SILENT PRELOAD AUDIO PIPELINE ---
+    // Audio Pipeline
     function createTrack(filename, loop = false) {
       const a = new Audio(filename);
       a.preload = 'auto';
@@ -234,7 +232,7 @@
       }
     }
 
-    // --- GPS HARDWARE ---
+    // Hardware GPS Telemetry
     let lastGpsLat = null;
     let lastGpsLon = null;
 
@@ -269,26 +267,29 @@
       );
     }
 
-    // --- SPAWNING SYSTEM WITH SPREAD-OUT DISTANCES ---
+    // Spawning Logic with Tight Pursuit Pocket
     function spawnZombie(forceSprinter = false) {
       if (isZombieState) return;
 
       const isSprinter = forceSprinter || (Math.random() < 0.03);
       const isAmbush = isSprinter ? false : (Math.random() < 0.20);
       
-      const relAngle = isAmbush 
+      const baseRelAngle = isAmbush 
         ? (Math.random() - 0.5) * (Math.PI / 2) 
-        : Math.PI + (Math.random() - 0.5) * 1.8;
+        : Math.PI + (Math.random() - 0.5) * 1.5;
 
-      const personalHoldDist = 38 + Math.random() * 26;
+      // Close pursuit pocket: 14m to 26m behind player
+      const personalHoldDist = isSprinter ? (10 + Math.random() * 6) : (14 + Math.random() * 12);
 
       zombies.push({
         id: Date.now() + Math.random(),
-        dist: 85 + Math.random() * 15,
+        dist: 88 + Math.random() * 10, // Spawns near edge of radar
         targetHoldDist: personalHoldDist,
-        relAngle: relAngle,
+        relAngle: baseRelAngle,
         mode: isAmbush ? 'charge' : 'chase',
-        type: isSprinter ? 'sprinter' : 'normal'
+        type: isSprinter ? 'sprinter' : 'normal',
+        wiggleSeed: Math.random() * 100,
+        wiggleFreq: 6.5 + Math.random() * 3.5 // Running stride rate
       });
 
       countEl.innerText = zombies.length;
@@ -331,7 +332,7 @@
       alertDesc.style.color = "#00E5FF";
     }
 
-    // --- GAME ENGINE & DYNAMIC DISTANCE LOOP ---
+    // Game Engine Loop
     let lastTime = performance.now();
     let scanAngle = 0;
 
@@ -339,41 +340,43 @@
       const dt = (now - lastTime) / 1000;
       lastTime = now;
 
+      // Smooth heading lerp
       let diff = player.targetHeading - player.headingRad;
       while (diff < -Math.PI) diff += Math.PI * 2;
       while (diff > Math.PI) diff -= Math.PI * 2;
       player.headingRad += diff * 0.05;
 
+      // Zombie Positioning & Running Motion
       zombies.forEach((z) => {
         if (isDustingZombies) {
-          z.dist += (38 + Math.random() * 22) * dt;
+          z.dist += (40 + Math.random() * 25) * dt;
           return;
         }
 
         if (isSprinterActive) {
+          // Sprinter closes straight to zero over 20s
           const progress = Math.max(0, (sprinterDeadline - Date.now()) / (20 * 1000));
-          const targetDist = z.type === 'sprinter' ? (progress * 55) : (progress * z.targetHoldDist);
-          z.dist += (targetDist - z.dist) * (0.08);
+          const targetDist = z.type === 'sprinter' ? (progress * 18) : (progress * z.targetHoldDist);
+          z.dist += (targetDist - z.dist) * (0.09);
         } else if (isHordeActive) {
+          // Horde closes gap from holding distance to 0 over 45s
           const progress = Math.max(0, (hordeDeadline - Date.now()) / (HORDE_TIME_LIMIT_SEC * 1000));
-          const targetDist = progress * (z.targetHoldDist + 5);
-          z.dist += (targetDist - z.dist) * (0.06);
+          const targetDist = progress * z.targetHoldDist;
+          z.dist += (targetDist - z.dist) * (0.07);
         } else {
-          if (z.mode === 'charge') {
-            z.dist -= 18 * dt;
-            if (z.dist <= z.targetHoldDist) {
-              z.mode = 'chase';
-              z.relAngle = Math.PI + (Math.random() - 0.5) * 1.2;
-            }
+          // Pre-Horde: Rapidly close in to the tight pursuit pocket
+          if (z.dist > z.targetHoldDist + 1) {
+            z.dist -= (28 * dt); // Aggressive forward rush into position
           } else {
-            z.dist += (z.targetHoldDist - z.dist) * (0.04);
-            if (z.dist < 28) z.dist = 28;
+            // Creep incrementally closer while pacing
+            z.dist += (z.targetHoldDist - z.dist) * 0.05;
           }
+          if (z.dist < 10) z.dist = 10; // Maintains tight gap, never directly on top pre-horde
         }
       });
 
       handleGameState();
-      renderRadar();
+      renderRadar(now / 1000);
       requestAnimationFrame(gameLoop);
     }
 
@@ -482,8 +485,8 @@
       musicChase.currentTime = 0;
     }
 
-    // --- CRISP RADAR RENDER ---
-    function renderRadar() {
+    // High-Resolution Radar Render with Running Wiggle
+    function renderRadar(timeSec) {
       ctx.clearRect(0, 0, displaySize, displaySize);
       const cx = displaySize / 2;
       const cy = displaySize / 2;
@@ -523,12 +526,20 @@
       ctx.fill();
       ctx.shadowBlur = 0;
 
-      // Zombie Blips
+      // Zombie Blips with Running Wiggle
       zombies.forEach(z => {
         if (z.dist <= RADAR_MAX_METERS) {
-          const drawDist = (z.dist / RADAR_MAX_METERS) * (cx - 12);
-          const x = cx + drawDist * Math.sin(z.relAngle);
-          const y = cy - drawDist * Math.cos(z.relAngle);
+          // Dynamic running oscillation: wiggles laterally like footfalls
+          const wiggleAngleOffset = Math.sin((timeSec * z.wiggleFreq) + z.wiggleSeed) * 0.08;
+          const currentRelAngle = z.relAngle + wiggleAngleOffset;
+
+          // Subtle forward/back breathing jitter
+          const distJitter = Math.cos((timeSec * z.wiggleFreq * 1.5) + z.wiggleSeed) * 0.75;
+          const currentDist = Math.max(2, z.dist + distJitter);
+
+          const drawDist = (currentDist / RADAR_MAX_METERS) * (cx - 12);
+          const x = cx + drawDist * Math.sin(currentRelAngle);
+          const y = cy - drawDist * Math.cos(currentRelAngle);
 
           ctx.beginPath();
           if (z.type === 'sprinter') {

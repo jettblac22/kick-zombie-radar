@@ -181,15 +181,17 @@
       playAlarmDrone(false);
     }
 
-// --- 5. DIAGNOSTIC KICK CHAT INTEGRATION ---
-    const KICK_KEY = '32cbd69e4b950ba42379';
-    const pusher = new Pusher(KICK_KEY, {
+// --- 5. MULTI-TARGET KICK INTEGRATION ---
+    const KICK_CHAT_ID = "2211151";
+    const KICK_CHAN_ID = "2218653";
+
+    // Primary Pusher Client
+    const pusher = new Pusher('32cbd69e4b950ba42379', {
       cluster: 'us2',
       wsHost: 'ws-us2.pusher.com',
       wsPort: 443,
       wssPort: 443,
       forceTLS: true,
-      disableStats: true,
       enabledTransports: ['ws', 'wss']
     });
 
@@ -198,34 +200,34 @@
       countEl.style.textShadow = '0 0 8px #00FF66';
     });
 
-    // Universal String Scanner: Checks ANY incoming text/object for !zombie
-    function inspectAndTrigger(event, rawData) {
-      let stringified = "";
+    function inspectPayload(data) {
       try {
-        stringified = typeof rawData === "string" ? rawData : JSON.stringify(rawData);
-      } catch(e) {
-        stringified = String(rawData);
-      }
-
-      // If anything matching !zombie comes down the pipe, trigger immediately
-      if (stringified.toLowerCase().includes("!zombie")) {
-        spawnZombie("fast");
-      }
+        const str = typeof data === 'string' ? data : JSON.stringify(data);
+        if (str.toLowerCase().includes('!zombie')) {
+          spawnZombie("fast");
+        }
+      } catch (e) {}
     }
 
-    // Subscribe to Kick's active chat channels
-    const chV2 = pusher.subscribe(`chatrooms.${KICK_CHATROOM_ID}.v2`);
-    const chV1 = pusher.subscribe(`chatroom_${KICK_CHATROOM_ID}`);
-    const chChannel = pusher.subscribe(`channel.${KICK_CHATROOM_ID}`);
+    // Subscribe to both Chatroom ID and Channel ID channels
+    const channels = [
+      pusher.subscribe(`chatrooms.${KICK_CHAT_ID}.v2`),
+      pusher.subscribe(`chatroom_${KICK_CHAT_ID}`),
+      pusher.subscribe(`channel.${KICK_CHAN_ID}`),
+      pusher.subscribe(`chatrooms.${KICK_CHAN_ID}.v2`)
+    ];
 
-    // Catch EVERYTHING Pusher sends across all subscribed channels
-    pusher.bind_global((eventName, data) => {
-      // Ignore internal pusher handshake heartbeats
-      if (!eventName.startsWith('pusher:')) {
-        inspectAndTrigger(eventName, data);
-      }
+    channels.forEach(ch => {
+      ch.bind_global((evt, data) => {
+        if (!evt.startsWith('pusher:')) {
+          inspectPayload(data);
+        }
+      });
+      ch.bind('App\\Events\\ChatMessageEvent', inspectPayload);
+      ch.bind('ChatMessageEvent', inspectPayload);
     });
 
+    
     // --- 6. TAP-TO-TEST TRIGGER ---
     document.getElementById('hud-container').addEventListener('click', () => {
       spawnZombie("fast");

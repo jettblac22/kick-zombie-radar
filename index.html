@@ -15,7 +15,7 @@
       user-select: none;
     }
 
-    /* High-Contrast Radar HUD */
+    /* Fixed Crisp Cockpit HUD */
     #hud-container {
       position: absolute;
       top: 24px;
@@ -24,13 +24,25 @@
       background: #0d120d;
       border: 3px solid #00FF66;
       border-radius: 18px;
-      box-shadow: 0 0 20px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 255, 102, 0.5);
+      box-shadow: 0 0 24px rgba(0, 0, 0, 0.95), 0 0 12px rgba(0, 255, 102, 0.5);
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 14px 10px 12px 10px;
+      padding: 10px 10px 12px 10px;
       cursor: pointer;
       z-index: 100;
+    }
+
+    /* Red Bold Title */
+    .hud-title {
+      font-family: "Arial Black", Impact, sans-serif;
+      font-size: 20px;
+      font-weight: 900;
+      color: #FF0033;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-bottom: 8px;
+      text-shadow: 0 0 10px rgba(255, 0, 51, 0.7), 0 0 20px rgba(0, 0, 0, 0.9);
     }
 
     canvas {
@@ -69,7 +81,7 @@
       font-family: "Arial Black", Impact, sans-serif;
     }
 
-    /* Fullscreen Threat Overlay */
+    /* Screen Danger & Infection Overlays */
     #danger-screen {
       position: fixed;
       top: 0;
@@ -108,10 +120,11 @@
 <body>
 
   <div id="danger-screen">
-    <div id="chase-text" class="chase-warning">⚠ HORDE OUTBREAK ⚠<br><span style="font-size: 26px; color: #fff;">SPRINT > 14 MPH TO ESCAPE!</span></div>
+    <div id="chase-text" class="chase-warning">⚠ HORDE OUTBREAK ⚠<br><span id="sub-warning" style="font-size: 26px; color: #fff;">SPRINT > 14 MPH TO ESCAPE!</span></div>
   </div>
 
   <div id="hud-container" title="Tap to test spawn">
+    <div class="hud-title">ZOMBIE ESCAPE</div>
     <canvas id="radar" width="200" height="200"></canvas>
     <div class="telemetry-bar">
       <div class="telemetry-item">
@@ -128,11 +141,13 @@
   <script>
     const ESCAPE_SPEED_MPH = 14.0;
     const DANGER_DISTANCE_METERS = 35.0;
-    const HORDE_OVERLOAD_LIMIT = 12;
+    const HORDE_TRIGGER_COUNT = 10;
 
     let player = { lat: 0, lon: 0, speedMph: 0, heading: 0 };
     let zombies = [];
     let isUnderAttack = false;
+    let alertStartTime = null;
+    let isOverrun = false;
 
     const canvas = document.getElementById('radar');
     const ctx = canvas.getContext('2d');
@@ -140,25 +155,117 @@
     const countEl = document.getElementById('zombie-count');
     const dangerScreen = document.getElementById('danger-screen');
     const chaseText = document.getElementById('chase-text');
+    const subWarning = document.getElementById('sub-warning');
 
-    // Web Audio Synthesizer
+    // --- AUDIO & MUSIC ENGINE ---
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    function playAlarmDrone(highPitch = false) {
+    let musicOscs = [];
+    let musicGain = null;
+    let musicInterval = null;
+
+    // Cinematic Horror "DUNNN!" Stinger
+    function playHorrorDunn() {
       if (audioCtx.state === 'suspended') audioCtx.resume();
-      const osc = audioCtx.createOscillator();
+      const t = audioCtx.currentTime;
+
+      // Low brass sub impact
+      const osc1 = audioCtx.createOscillator();
+      const osc2 = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(highPitch ? 340 : 95, audioCtx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(highPitch ? 150 : 40, audioCtx.currentTime + 0.4);
-      gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
-      osc.connect(gain);
+
+      osc1.type = 'sawtooth';
+      osc1.frequency.setValueAtTime(65, t);
+      osc1.frequency.exponentialRampToValueAtTime(32, t + 1.2);
+
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(68.5, t); // Metallic dissonance beating
+      osc2.frequency.exponentialRampToValueAtTime(31, t + 1.2);
+
+      gain.gain.setValueAtTime(0.45, t);
+      gain.gain.exponentialRampToValueAtTime(0.01, t + 1.2);
+
+      osc1.connect(gain);
+      osc2.connect(gain);
       gain.connect(audioCtx.destination);
-      osc.start();
-      osc.stop(audioCtx.currentTime + 0.4);
+
+      osc1.start(t);
+      osc2.start(t);
+      osc1.stop(t + 1.2);
+      osc2.stop(t + 1.2);
     }
 
-    // Hardware GPS Tracking
+    // Procedural Haunting Chase Score
+    function startHauntingMusic() {
+      if (musicGain) return; // Already running
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+
+      musicGain = audioCtx.createGain();
+      musicGain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+      musicGain.connect(audioCtx.destination);
+
+      // Deep oscillating drone
+      const bass1 = audioCtx.createOscillator();
+      const bass2 = audioCtx.createOscillator();
+      bass1.type = 'sawtooth';
+      bass2.type = 'sine';
+      bass1.frequency.setValueAtTime(43.65, audioCtx.currentTime); // F1
+      bass2.frequency.setValueAtTime(46.25, audioCtx.currentTime); // F#1 (Tritone edge)
+
+      bass1.connect(musicGain);
+      bass2.connect(musicGain);
+      bass1.start();
+      bass2.start();
+      musicOscs = [bass1, bass2];
+
+      // Creepy staccato rhythm pulse
+      musicInterval = setInterval(() => {
+        if (!musicGain) return;
+        const pulseOsc = audioCtx.createOscillator();
+        const pulseGain = audioCtx.createGain();
+        pulseOsc.type = 'sawtooth';
+        pulseOsc.frequency.setValueAtTime(87.31 + Math.random() * 5, audioCtx.currentTime);
+        pulseGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        pulseGain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.18);
+        pulseOsc.connect(pulseGain);
+        pulseGain.connect(audioCtx.destination);
+        pulseOsc.start();
+        pulseOsc.stop(audioCtx.currentTime + 0.18);
+      }, 420);
+    }
+
+    function intensifyMusic() {
+      if (musicGain) {
+        musicGain.gain.linearRampToValueAtTime(0.28, audioCtx.currentTime + 1.0);
+      }
+    }
+
+    function stopHauntingMusic() {
+      if (musicInterval) {
+        clearInterval(musicInterval);
+        musicInterval = null;
+      }
+      if (musicGain) {
+        musicGain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+        setTimeout(() => {
+          musicOscs.forEach(o => { try { o.stop(); } catch(e){} });
+          musicOscs = [];
+          musicGain = null;
+        }, 400);
+      }
+    }
+
+    // Rasping Evil Voice Engine
+    function speakEvilVoice(text) {
+      if (!('speechSynthesis' in window)) return;
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.pitch = 0.2;  // Demonic pitch
+      utter.rate = 0.75;  // Slow, menacing crawl
+      utter.volume = 1.0;
+      window.speechSynthesis.speak(utter);
+    }
+
+    // --- HARDWARE GPS & TELEMETRY ---
     if ('geolocation' in navigator) {
       navigator.geolocation.watchPosition(
         (pos) => {
@@ -188,7 +295,7 @@
     function createSingleZombie() {
       const currentLat = player.lat || 42.3314;
       const currentLon = player.lon || -83.0458;
-      const radiusMeters = 55 + Math.random() * 35; // Spawns near outer edge of radar
+      const radiusMeters = 55 + Math.random() * 35;
       const angle = Math.random() * Math.PI * 2;
       const dLat = (radiusMeters * Math.cos(angle)) / 111320;
       const dLon = (radiusMeters * Math.sin(angle)) / (111320 * Math.cos(currentLat * Math.PI / 180));
@@ -201,7 +308,6 @@
     }
 
     function triggerZombieSpawnEvent() {
-      // 10% chance to spawn 3 zombies, otherwise spawn 1
       const isPack = Math.random() < 0.10;
       const spawnCount = isPack ? 3 : 1;
 
@@ -210,12 +316,12 @@
       }
 
       countEl.innerText = zombies.length;
-      playAlarmDrone(false);
+      playHorrorDunn();
     }
 
-    // --- RANDOM SPAWN LOOP (30 to 120 Seconds) ---
+    // Continuous random timer (30s to 120s)
     function scheduleNextSpawn() {
-      const nextDelayMs = (30 + Math.random() * 90) * 1000; // 30s to 120s
+      const nextDelayMs = (30 + Math.random() * 90) * 1000;
       setTimeout(() => {
         triggerZombieSpawnEvent();
         scheduleNextSpawn();
@@ -223,23 +329,21 @@
     }
     scheduleNextSpawn();
 
-    // Tap radar HUD directly to manually spawn (desk testing)
+    // Tap HUD box to manual test
     document.getElementById('hud-container').addEventListener('click', () => {
       triggerZombieSpawnEvent();
     });
 
-    // --- SURVIVAL ENGINE & APPROACHING LOGIC ---
+    // --- SURVIVAL LOOP & ESCAPE / OVERRUN LOGIC ---
     function evaluateSurvivalState() {
       let nearestDist = Infinity;
       const currentLat = player.lat || 42.3314;
       const currentLon = player.lon || -83.0458;
 
-      // Zombies creep continuously toward the center (player)
       zombies.forEach((z) => {
         const dist = getDistanceMeters(currentLat, currentLon, z.lat, z.lon);
         if (dist < nearestDist) nearestDist = dist;
 
-        // Step speed toward player
         const step = 0.000035;
         z.lat += (currentLat - z.lat) * step;
         z.lon += (currentLon - z.lon) * step;
@@ -247,30 +351,63 @@
 
       countEl.innerText = zombies.length;
 
-      // Trigger Alert if: any zombie is closer than 35m OR horde reaches 12
-      const isOverloaded = zombies.length >= HORDE_OVERLOAD_LIMIT;
+      const isHordeActive = zombies.length >= HORDE_TRIGGER_COUNT;
       const isTooClose = nearestDist < DANGER_DISTANCE_METERS;
 
-      if (isTooClose || isOverloaded) {
-        isUnderAttack = true;
-        dangerScreen.style.borderWidth = "28px";
-        chaseText.style.display = "block";
-        playAlarmDrone(true);
+      if (isTooClose || isHordeActive) {
+        if (!isUnderAttack) {
+          isUnderAttack = true;
+          alertStartTime = Date.now();
+          dangerScreen.style.borderWidth = "28px";
+          chaseText.style.display = "block";
+          startHauntingMusic();
+        }
 
-        // Escape by skating over 14 MPH
+        // Check if 20 seconds elapsed without hitting 14 MPH
+        const elapsed = (Date.now() - alertStartTime) / 1000;
+        if (elapsed >= 20 && !isOverrun) {
+          isOverrun = true;
+          intensifyMusic();
+          subWarning.innerText = "OVERRUN! INFECTION SYSTEM CRITICAL!";
+          subWarning.style.color = "#FF0033";
+        }
+
+        // Player hits 14 MPH escape threshold
         if (player.speedMph >= ESCAPE_SPEED_MPH) {
-          if (isOverloaded) {
-            // Cut horde in half on successful sprint
-            zombies.splice(0, Math.ceil(zombies.length / 2));
+          if (isOverrun) {
+            // Player failed the 20s window: Evil voice trigger
+            speakEvilVoice("It's too late... you are a zombie now!");
+            subWarning.innerText = "YOU ARE A ZOMBIE NOW!";
+            setTimeout(() => {
+              // Reset game state after infection
+              zombies = [];
+              isOverrun = false;
+              isUnderAttack = false;
+              alertStartTime = null;
+              subWarning.innerText = "SPRINT > 14 MPH TO ESCAPE!";
+              subWarning.style.color = "#fff";
+              dangerScreen.style.borderWidth = "0px";
+              chaseText.style.display = "none";
+              stopHauntingMusic();
+            }, 5000);
           } else {
-            // Drop zombies that breached the perimeter
-            zombies = zombies.filter(z => getDistanceMeters(currentLat, currentLon, z.lat, z.lon) > DANGER_DISTANCE_METERS);
+            // Clean Escape within the 20s window
+            zombies = [];
+            isUnderAttack = false;
+            alertStartTime = null;
+            dangerScreen.style.borderWidth = "0px";
+            chaseText.style.display = "none";
+            stopHauntingMusic();
           }
         }
       } else {
-        isUnderAttack = false;
-        dangerScreen.style.borderWidth = "0px";
-        chaseText.style.display = "none";
+        if (!isOverrun) {
+          isUnderAttack = false;
+          alertStartTime = null;
+          dangerScreen.style.borderWidth = "0px";
+          chaseText.style.display = "none";
+          stopHauntingMusic();
+        }
       }
     }
 
@@ -284,7 +421,7 @@
       const currentLat = player.lat || 42.3314;
       const currentLon = player.lon || -83.0458;
 
-      // Range Rings
+      // Radar Range Rings
       ctx.strokeStyle = "rgba(0, 255, 102, 0.4)";
       ctx.lineWidth = 1.5;
       [30, 60, 90].forEach(r => {
@@ -311,7 +448,7 @@
       ctx.fill();
       ctx.shadowBlur = 0;
 
-      // Approaching Zombie Blips
+      // Approaching Red Zombie Blips
       zombies.forEach(z => {
         const d = getDistanceMeters(currentLat, currentLon, z.lat, z.lon);
         if (d <= radarMaxMeters) {

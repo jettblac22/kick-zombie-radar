@@ -24,35 +24,35 @@
     /* Pinned Bottom-Right Corner */
     #hud-container {
       position: absolute;
-      bottom: 24px;
-      right: 24px;
-      width: 250px;
+      bottom: 20px;
+      right: 20px;
+      width: 220px;
       background: rgba(10, 15, 10, 0.96);
       border: 3px solid #00FF66;
-      border-radius: 20px;
+      border-radius: 18px;
       box-shadow: 0 0 25px rgba(0, 0, 0, 1), 0 0 14px rgba(0, 255, 102, 0.6);
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 12px 10px;
+      padding: 10px 8px;
       z-index: 100;
     }
 
     .hud-title {
       font-family: "Arial Black", Impact, sans-serif;
-      font-size: 21px;
+      font-size: 18px;
       font-weight: 900;
       color: #FF0033;
       text-transform: uppercase;
-      letter-spacing: 2px;
-      margin-bottom: 8px;
+      letter-spacing: 1.5px;
+      margin-bottom: 6px;
       text-shadow: 0 0 8px rgba(255, 0, 51, 0.8), 0 2px 4px #000;
       -webkit-text-stroke: 1px #400000;
     }
 
     canvas#radar {
-      width: 210px;
-      height: 210px;
+      width: 180px;
+      height: 180px;
       border-radius: 50%;
       border: 2px solid rgba(0, 255, 102, 0.8);
       background: radial-gradient(circle, #081d0d 0%, #020703 100%);
@@ -60,7 +60,7 @@
     }
 
     .telemetry-bar {
-      margin-top: 10px;
+      margin-top: 8px;
       width: 100%;
       display: flex;
       justify-content: space-around;
@@ -74,32 +74,33 @@
     }
 
     .telemetry-label {
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 900;
-      letter-spacing: 1.5px;
+      letter-spacing: 1.2px;
       color: #7ab886;
       text-transform: uppercase;
       text-shadow: 0 1px 2px #000;
     }
 
     .telemetry-val {
-      font-size: 23px;
+      font-size: 20px;
       font-weight: 900;
       color: #00FF66;
       text-shadow: 0 0 8px rgba(0, 255, 102, 0.8), 0 2px 4px #000;
       font-family: "Arial Black", Impact, sans-serif;
     }
 
+    /* Outbreak Alert Banner - Positioned to the LEFT of the Radar */
     #stream-alert-box {
       display: none;
       position: absolute;
-      bottom: 375px;
-      right: 24px;
-      width: 310px;
+      bottom: 24px;
+      right: 254px; /* 220px HUD width + 34px gap */
+      width: 270px;
       background: rgba(180, 0, 20, 0.98);
       border: 3.5px solid #FF0033;
       border-radius: 14px;
-      padding: 14px 16px;
+      padding: 12px 14px;
       text-align: center;
       box-shadow: 0 0 35px rgba(255, 0, 51, 0.9), 0 0 20px #000;
       animation: pulse 0.4s infinite alternate;
@@ -107,17 +108,21 @@
     }
 
     .alert-main {
-      font-size: 21px;
+      font-size: 17px;
+      line-height: 1.2;
       font-weight: 900;
       color: #FFFFFF;
       text-shadow: 0 0 12px #000, 0 2px 4px #000;
-      letter-spacing: 1.5px;
+      letter-spacing: 1.2px;
       font-family: "Arial Black", Impact, sans-serif;
       -webkit-text-stroke: 1px #000;
+      margin: 0;
+      padding: 0;
     }
 
     .alert-timer {
-      font-size: 32px;
+      font-size: 28px;
+      line-height: 1.1;
       font-weight: 900;
       color: #FFF;
       font-family: "Arial Black", Impact, sans-serif;
@@ -127,22 +132,26 @@
     }
 
     .alert-sub {
-      font-size: 15px;
+      font-size: 13px;
+      line-height: 1.2;
       font-weight: 900;
       color: #FFE600;
-      letter-spacing: 1px;
+      letter-spacing: 0.8px;
       text-shadow: 0 0 8px #000, 0 2px 3px #000;
       -webkit-text-stroke: 0.5px #000;
+      margin: 0;
+      padding: 0;
     }
 
     @keyframes pulse {
       from { transform: scale(1); }
-      to { transform: scale(1.04); }
+      to { transform: scale(1.03); }
     }
   </style>
 </head>
 <body>
 
+  <!-- Positioned to the left of the radar, safe from the screen top -->
   <div id="stream-alert-box">
     <div class="alert-main" id="alert-title">⚠ HORDE OUTBREAK ⚠</div>
     <div class="alert-timer" id="alert-timer">00:45</div>
@@ -155,7 +164,7 @@
     <div class="telemetry-bar">
       <div class="telemetry-item">
         <span class="telemetry-label">SPEED</span>
-        <span class="telemetry-val"><span id="speed-val">0.0</span> <span style="font-size: 14px;">MPH</span></span>
+        <span class="telemetry-val"><span id="speed-val">0.0</span> <span style="font-size: 13px;">MPH</span></span>
       </div>
       <div class="telemetry-item">
         <span class="telemetry-label">HORDE</span>
@@ -190,14 +199,14 @@
     const alertTimer = document.getElementById('alert-timer');
     const alertDesc = document.getElementById('alert-desc');
 
-    // High-DPI Canvas Scaling
+    // High-DPI Canvas Scaling (180px landscape display)
     const dpr = window.devicePixelRatio || 2;
-    const displaySize = 210;
+    const displaySize = 180;
     canvas.width = displaySize * dpr;
     canvas.height = displaySize * dpr;
     ctx.scale(dpr, dpr);
 
-    // Audio Pipeline
+    // Silent Preload Audio Pipeline
     function createTrack(filename, loop = false) {
       const a = new Audio(filename);
       a.preload = 'auto';
@@ -267,7 +276,7 @@
       );
     }
 
-    // Spawning Logic with Tight Pursuit Pocket
+    // Spawning Logic
     function spawnZombie(forceSprinter = false) {
       if (isZombieState) return;
 
@@ -278,18 +287,17 @@
         ? (Math.random() - 0.5) * (Math.PI / 2) 
         : Math.PI + (Math.random() - 0.5) * 1.5;
 
-      // Close pursuit pocket: 14m to 26m behind player
       const personalHoldDist = isSprinter ? (10 + Math.random() * 6) : (14 + Math.random() * 12);
 
       zombies.push({
         id: Date.now() + Math.random(),
-        dist: 88 + Math.random() * 10, // Spawns near edge of radar
+        dist: 88 + Math.random() * 10,
         targetHoldDist: personalHoldDist,
         relAngle: baseRelAngle,
         mode: isAmbush ? 'charge' : 'chase',
         type: isSprinter ? 'sprinter' : 'normal',
         wiggleSeed: Math.random() * 100,
-        wiggleFreq: 6.5 + Math.random() * 3.5 // Running stride rate
+        wiggleFreq: 6.5 + Math.random() * 3.5
       });
 
       countEl.innerText = zombies.length;
@@ -332,7 +340,7 @@
       alertDesc.style.color = "#00E5FF";
     }
 
-    // Game Engine Loop
+    // Engine Loop
     let lastTime = performance.now();
     let scanAngle = 0;
 
@@ -340,13 +348,11 @@
       const dt = (now - lastTime) / 1000;
       lastTime = now;
 
-      // Smooth heading lerp
       let diff = player.targetHeading - player.headingRad;
       while (diff < -Math.PI) diff += Math.PI * 2;
       while (diff > Math.PI) diff -= Math.PI * 2;
       player.headingRad += diff * 0.05;
 
-      // Zombie Positioning & Running Motion
       zombies.forEach((z) => {
         if (isDustingZombies) {
           z.dist += (40 + Math.random() * 25) * dt;
@@ -354,24 +360,20 @@
         }
 
         if (isSprinterActive) {
-          // Sprinter closes straight to zero over 20s
           const progress = Math.max(0, (sprinterDeadline - Date.now()) / (20 * 1000));
           const targetDist = z.type === 'sprinter' ? (progress * 18) : (progress * z.targetHoldDist);
           z.dist += (targetDist - z.dist) * (0.09);
         } else if (isHordeActive) {
-          // Horde closes gap from holding distance to 0 over 45s
           const progress = Math.max(0, (hordeDeadline - Date.now()) / (HORDE_TIME_LIMIT_SEC * 1000));
           const targetDist = progress * z.targetHoldDist;
           z.dist += (targetDist - z.dist) * (0.07);
         } else {
-          // Pre-Horde: Rapidly close in to the tight pursuit pocket
           if (z.dist > z.targetHoldDist + 1) {
-            z.dist -= (28 * dt); // Aggressive forward rush into position
+            z.dist -= (28 * dt);
           } else {
-            // Creep incrementally closer while pacing
             z.dist += (z.targetHoldDist - z.dist) * 0.05;
           }
-          if (z.dist < 10) z.dist = 10; // Maintains tight gap, never directly on top pre-horde
+          if (z.dist < 10) z.dist = 10;
         }
       });
 
@@ -485,13 +487,12 @@
       musicChase.currentTime = 0;
     }
 
-    // High-Resolution Radar Render with Running Wiggle
+    // High-Resolution Radar Render
     function renderRadar(timeSec) {
       ctx.clearRect(0, 0, displaySize, displaySize);
       const cx = displaySize / 2;
       const cy = displaySize / 2;
 
-      // Range rings
       ctx.strokeStyle = "rgba(0, 255, 102, 0.45)";
       ctx.lineWidth = 1.5;
       [30, 60, 90].forEach(r => {
@@ -500,15 +501,13 @@
         ctx.stroke();
       });
 
-      // Directional arrow
       ctx.strokeStyle = "rgba(0, 255, 102, 0.85)";
       ctx.lineWidth = 2.5;
       ctx.beginPath();
       ctx.moveTo(cx, 8);
-      ctx.lineTo(cx, 18);
+      ctx.lineTo(cx, 16);
       ctx.stroke();
 
-      // Sweeper
       scanAngle += 0.045;
       ctx.strokeStyle = "#00FF66";
       ctx.lineWidth = 2.2;
@@ -517,27 +516,23 @@
       ctx.lineTo(cx + Math.cos(scanAngle) * (cx - 8), cy + Math.sin(scanAngle) * (cy - 8));
       ctx.stroke();
 
-      // Center Player Indicator
       ctx.fillStyle = isZombieState ? "#FF0033" : "#00E5FF";
       ctx.shadowColor = ctx.fillStyle;
       ctx.shadowBlur = 10;
       ctx.beginPath();
-      ctx.arc(cx, cy, 5.5, 0, Math.PI * 2);
+      ctx.arc(cx, cy, 5, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
 
-      // Zombie Blips with Running Wiggle
       zombies.forEach(z => {
         if (z.dist <= RADAR_MAX_METERS) {
-          // Dynamic running oscillation: wiggles laterally like footfalls
           const wiggleAngleOffset = Math.sin((timeSec * z.wiggleFreq) + z.wiggleSeed) * 0.08;
           const currentRelAngle = z.relAngle + wiggleAngleOffset;
 
-          // Subtle forward/back breathing jitter
           const distJitter = Math.cos((timeSec * z.wiggleFreq * 1.5) + z.wiggleSeed) * 0.75;
           const currentDist = Math.max(2, z.dist + distJitter);
 
-          const drawDist = (currentDist / RADAR_MAX_METERS) * (cx - 12);
+          const drawDist = (currentDist / RADAR_MAX_METERS) * (cx - 10);
           const x = cx + drawDist * Math.sin(currentRelAngle);
           const y = cy - drawDist * Math.cos(currentRelAngle);
 
@@ -546,12 +541,12 @@
             ctx.fillStyle = "#00F0FF";
             ctx.shadowColor = "#00F0FF";
             ctx.shadowBlur = 16;
-            ctx.arc(x, y, 8, 0, Math.PI * 2);
+            ctx.arc(x, y, 7.5, 0, Math.PI * 2);
           } else {
             ctx.fillStyle = "#FF0033";
             ctx.shadowColor = "#FF0033";
             ctx.shadowBlur = 12;
-            ctx.arc(x, y, 6.5, 0, Math.PI * 2);
+            ctx.arc(x, y, 6, 0, Math.PI * 2);
           }
           ctx.fill();
           ctx.shadowBlur = 0;

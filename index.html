@@ -4,6 +4,10 @@
   <meta charset="UTF-8" />
   <title>Zombie Survival Radar</title>
   <style>
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       margin: 0;
       padding: 0;
@@ -15,10 +19,9 @@
       user-select: none;
     }
 
-    /* Fixed Crisp Cockpit HUD */
     #hud-container {
       position: absolute;
-      top: 24px;
+      bottom: 24px;
       left: 24px;
       width: 240px;
       background: #0d120d;
@@ -33,7 +36,6 @@
       z-index: 100;
     }
 
-    /* Red Bold Title */
     .hud-title {
       font-family: "Arial Black", Impact, sans-serif;
       font-size: 20px;
@@ -81,49 +83,53 @@
       font-family: "Arial Black", Impact, sans-serif;
     }
 
-    /* Screen Danger & Infection Overlays */
-    #danger-screen {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      pointer-events: none;
-      box-sizing: border-box;
-      border: 0px solid rgba(255, 0, 40, 0.85);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      transition: border-width 0.15s ease-in-out;
-      z-index: 99;
+    #stream-alert-box {
+      display: none;
+      position: absolute;
+      bottom: 330px;
+      left: 24px;
+      width: 320px;
+      background: rgba(180, 0, 20, 0.95);
+      border: 3px solid #FF0033;
+      border-radius: 12px;
+      padding: 12px 14px;
+      text-align: center;
+      box-shadow: 0 0 30px rgba(255, 0, 51, 0.8), 0 0 15px #000;
+      animation: pulse 0.4s infinite alternate;
+      z-index: 101;
     }
 
-    .chase-warning {
-      display: none;
-      font-size: 46px;
+    .alert-main {
+      font-size: 22px;
       font-weight: 900;
-      color: #FF0033;
-      text-shadow: 0 0 25px #000, 0 0 35px #FF0033;
-      animation: pulse 0.35s infinite alternate;
-      letter-spacing: 2px;
-      text-align: center;
+      color: #FFFFFF;
+      text-shadow: 0 0 10px #000;
+      letter-spacing: 1.5px;
       font-family: "Arial Black", Impact, sans-serif;
     }
 
+    .alert-sub {
+      font-size: 15px;
+      font-weight: 800;
+      color: #FFE600;
+      margin-top: 4px;
+      letter-spacing: 1px;
+    }
+
     @keyframes pulse {
-      from { transform: scale(1); opacity: 0.85; }
-      to { transform: scale(1.08); opacity: 1; }
+      from { transform: scale(1); }
+      to { transform: scale(1.05); }
     }
   </style>
 </head>
 <body>
 
-  <div id="danger-screen">
-    <div id="chase-text" class="chase-warning">⚠ HORDE OUTBREAK ⚠<br><span id="sub-warning" style="font-size: 26px; color: #fff;">SPRINT > 14 MPH TO ESCAPE!</span></div>
+  <div id="stream-alert-box">
+    <div class="alert-main" id="alert-title">⚠ HORDE OUTBREAK ⚠</div>
+    <div class="alert-sub" id="alert-desc">SPRINT > 14 MPH TO ESCAPE!</div>
   </div>
 
-  <div id="hud-container" title="Single Tap: Spawn | Double Tap: Simulate 15 MPH Escape">
+  <div id="hud-container" title="Tap to test">
     <div class="hud-title">ZOMBIE ESCAPE</div>
     <canvas id="radar" width="200" height="200"></canvas>
     <div class="telemetry-bar">
@@ -140,24 +146,26 @@
 
   <script>
     const ESCAPE_SPEED_MPH = 14.0;
-    const DANGER_DISTANCE_METERS = 35.0;
+    const SPRINTER_ESCAPE_MPH = 17.0;
     const HORDE_TRIGGER_COUNT = 10;
+    const RADAR_MAX_METERS = 100.0;
 
-    let player = { lat: 0, lon: 0, speedMph: 0, heading: 0 };
+    let player = { lat: 42.3314, lon: -83.0458, speedMph: 0, headingRad: 0 };
     let zombies = [];
-    let isUnderAttack = false;
-    let alertStartTime = null;
+    let isHordeChaseActive = false;
+    let isSprinterChaseActive = false;
+    let threatStartTime = null;
     let isOverrun = false;
 
     const canvas = document.getElementById('radar');
     const ctx = canvas.getContext('2d');
     const speedEl = document.getElementById('speed-val');
     const countEl = document.getElementById('zombie-count');
-    const dangerScreen = document.getElementById('danger-screen');
-    const chaseText = document.getElementById('chase-text');
-    const subWarning = document.getElementById('sub-warning');
+    const alertBox = document.getElementById('stream-alert-box');
+    const alertTitle = document.getElementById('alert-title');
+    const alertDesc = document.getElementById('alert-desc');
 
-    // --- REAL AUDIO FILES & IOS UNLOCK ENGINE (.m4a) ---
+    // --- AUDIO SYSTEM ---
     function createTrack(filename, loop = false) {
       const a = new Audio(filename);
       a.preload = 'auto';
@@ -168,13 +176,13 @@
 
     const sfxDunn = createTrack('dunn.m4a');
     const musicChase = createTrack('chase.m4a', true);
+    const musicSprinter = createTrack('sprinter.m4a', true);
     const voiceEvil = createTrack('evil_voice.m4a');
 
     let audioUnlocked = false;
-
     function unlockAudioChannels() {
       if (audioUnlocked) return;
-      [sfxDunn, musicChase, voiceEvil].forEach(track => {
+      [sfxDunn, musicChase, musicSprinter, voiceEvil].forEach(track => {
         const p = track.play();
         if (p !== undefined) {
           p.then(() => {
@@ -188,69 +196,94 @@
 
     function playSound(audio) {
       audio.currentTime = 0;
-      const promise = audio.play();
-      if (promise !== undefined) {
-        promise.catch(err => console.warn('Playback blocked:', err));
-      }
+      audio.play().catch(e => console.warn('Audio blocked:', e));
     }
 
-    // --- HARDWARE GPS TELEMETRY ---
+    // --- HARDWARE GPS & HEADING ---
+    let lastGpsLat = null;
+    let lastGpsLon = null;
+
     if ('geolocation' in navigator) {
       navigator.geolocation.watchPosition(
         (pos) => {
-          player.lat = pos.coords.latitude;
-          player.lon = pos.coords.longitude;
-          player.heading = pos.coords.heading || 0;
+          const newLat = pos.coords.latitude;
+          const newLon = pos.coords.longitude;
+
+          if (lastGpsLat !== null && lastGpsLon !== null) {
+            const dY = newLat - lastGpsLat;
+            const dX = (newLon - lastGpsLon) * Math.cos(newLat * Math.PI / 180);
+            if (Math.hypot(dY, dX) > 0.00001) {
+              player.headingRad = Math.atan2(dX, dY);
+            }
+          }
+          if (pos.coords.heading !== null && !isNaN(pos.coords.heading)) {
+            player.headingRad = pos.coords.heading * Math.PI / 180;
+          }
+
+          lastGpsLat = newLat;
+          lastGpsLon = newLon;
+          player.lat = newLat;
+          player.lon = newLon;
+
           const rawSpeed = pos.coords.speed || 0;
           player.speedMph = parseFloat((rawSpeed * 2.23694).toFixed(1));
           speedEl.innerText = player.speedMph;
-          evaluateSurvivalState();
         },
         (err) => console.warn('GPS Error: ', err),
         { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
       );
     }
 
-    function getDistanceMeters(lat1, lon1, lat2, lon2) {
-      const R = 6371000;
-      const dLat = (lat2 - lat1) * Math.PI / 180;
-      const dLon = (lon2 - lon1) * Math.PI / 180;
-      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                Math.sin(dLon / 2) * Math.sin(dLon / 2);
-      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    }
+    // --- SPAWNING SYSTEM (Standard & Blue Sprinter) ---
+    function spawnZombieEntity(forceSprinter = false) {
+      const isSprinter = forceSprinter || (Math.random() < 0.03); // 3% Sprinter chance
+      const isAmbush = isSprinter ? false : (Math.random() < 0.20);
+      
+      let relAngle;
+      let initSpeed;
 
-    function createSingleZombie() {
-      const currentLat = player.lat || 42.3314;
-      const currentLon = player.lon || -83.0458;
-      const radiusMeters = 55 + Math.random() * 35;
-      const angle = Math.random() * Math.PI * 2;
-      const dLat = (radiusMeters * Math.cos(angle)) / 111320;
-      const dLon = (radiusMeters * Math.sin(angle)) / (111320 * Math.cos(currentLat * Math.PI / 180));
+      if (isSprinter) {
+        relAngle = Math.PI + (Math.random() - 0.5) * 0.5; // Stalks directly behind
+        initSpeed = 0.22; // Much faster approach
+      } else if (isAmbush) {
+        relAngle = (Math.random() - 0.5) * (Math.PI / 2);
+        initSpeed = 0.28;
+      } else {
+        relAngle = Math.PI + (Math.random() - 0.5) * (Math.PI * 0.7);
+        initSpeed = 0.08;
+      }
+
+      const spawnDist = 80 + Math.random() * 15;
+      const globalAngle = player.headingRad + relAngle;
 
       zombies.push({
         id: Date.now() + Math.random(),
-        lat: currentLat + dLat,
-        lon: currentLon + dLon
+        dist: spawnDist,
+        angle: globalAngle,
+        mode: isAmbush ? 'charge' : 'chase',
+        speed: initSpeed,
+        type: isSprinter ? 'sprinter' : 'normal'
       });
+
+      countEl.innerText = zombies.length;
+      playSound(sfxDunn);
+
+      if (isSprinter && !isSprinterChaseActive) {
+        triggerSprinterAlert();
+      }
     }
 
     function triggerZombieSpawnEvent() {
       const isPack = Math.random() < 0.10;
-      const spawnCount = isPack ? 3 : 1;
-
-      for (let i = 0; i < spawnCount; i++) {
-        createSingleZombie();
+      const count = isPack ? 3 : 1;
+      for (let i = 0; i < count; i++) {
+        spawnZombieEntity();
       }
-
-      countEl.innerText = zombies.length;
-      playSound(sfxDunn);
     }
 
-    // Random spawn loop: every 30s to 120s
+    // Spawn loop: 15 to 50 seconds
     function scheduleNextSpawn() {
-      const nextDelayMs = (30 + Math.random() * 90) * 1000;
+      const nextDelayMs = (15 + Math.random() * 35) * 1000;
       setTimeout(() => {
         triggerZombieSpawnEvent();
         scheduleNextSpawn();
@@ -258,118 +291,208 @@
     }
     scheduleNextSpawn();
 
-    // Tap radar HUD:
-    // Single Tap = Spawn a zombie & play dunn sound
-    // Double Tap = Simulate sprinting 15.5 MPH to test escape
-    let lastTap = 0;
+    function triggerSprinterAlert() {
+      isSprinterChaseActive = true;
+      threatStartTime = Date.now();
+      isOverrun = false;
+
+      // Stop regular chase music if playing
+      musicChase.pause();
+      musicChase.currentTime = 0;
+
+      // Start blue sprinter theme
+      musicSprinter.currentTime = 0;
+      musicSprinter.play().catch(() => {});
+
+      alertBox.style.display = "block";
+      alertBox.style.background = "rgba(0, 40, 180, 0.95)";
+      alertBox.style.borderColor = "#00D9FF";
+      alertBox.style.boxShadow = "0 0 30px rgba(0, 217, 255, 0.8), 0 0 15px #000";
+      alertTitle.innerText = "⚡ BLUE SPRINTER DETECTED ⚡";
+      alertDesc.innerText = "SPRINT > 17 MPH IN 20 SECONDS!";
+      alertDesc.style.color = "#00E5FF";
+    }
+
+    // Desk test controls:
+    // Single tap = normal spawn
+    // Double tap = simulate 17.5 MPH burst
+    // Triple tap = force spawn Blue Sprinter
+    let tapCount = 0;
+    let tapTimer = null;
     document.getElementById('hud-container').addEventListener('click', () => {
       unlockAudioChannels();
+      tapCount++;
 
-      const now = Date.now();
-      if (now - lastTap < 350) {
-        player.speedMph = 15.5;
-        speedEl.innerText = "15.5";
-        evaluateSurvivalState();
-        setTimeout(() => {
-          player.speedMph = 0.0;
-          speedEl.innerText = "0.0";
-        }, 1500);
-      } else {
-        triggerZombieSpawnEvent();
-      }
-      lastTap = now;
+      clearTimeout(tapTimer);
+      tapTimer = setTimeout(() => {
+        if (tapCount === 1) {
+          triggerZombieSpawnEvent();
+        } else if (tapCount === 2) {
+          player.speedMph = 17.5;
+          speedEl.innerText = "17.5";
+          setTimeout(() => {
+            player.speedMph = 0.0;
+            speedEl.innerText = "0.0";
+          }, 1800);
+        } else if (tapCount >= 3) {
+          spawnZombieEntity(true);
+        }
+        tapCount = 0;
+      }, 350);
     });
 
-    // --- SURVIVAL ENGINE & ESCAPE LOGIC ---
-    function evaluateSurvivalState() {
-      let nearestDist = Infinity;
-      const currentLat = player.lat || 42.3314;
-      const currentLon = player.lon || -83.0458;
+    // --- GAME ENGINE & ESCAPE LOGIC ---
+    let lastTime = performance.now();
+    let scanAngle = 0;
 
+    function gameLoop(now) {
+      const dt = (now - lastTime) / 1000;
+      lastTime = now;
+
+      // Physics & Tracking
       zombies.forEach((z) => {
-        const dist = getDistanceMeters(currentLat, currentLon, z.lat, z.lon);
-        if (dist < nearestDist) nearestDist = dist;
+        const targetAngle = player.headingRad + Math.PI;
 
-        const step = 0.000035;
-        z.lat += (currentLat - z.lat) * step;
-        z.lon += (currentLon - z.lon) * step;
+        if (z.mode === 'charge') {
+          z.dist -= (z.speed * 60) * dt;
+          if (z.dist < 18) {
+            z.mode = 'chase';
+            z.speed = 0.09;
+            z.angle = targetAngle + (Math.random() - 0.5) * 0.5;
+            z.dist = 22;
+          }
+        } else {
+          z.dist -= (z.speed * 35) * dt;
+          if (z.dist < 8) z.dist = 8;
+
+          let angleDiff = targetAngle - z.angle;
+          while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+          while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+          z.angle += angleDiff * (z.type === 'sprinter' ? 0.05 : 0.02);
+        }
       });
 
-      countEl.innerText = zombies.length;
+      // Threat State Handlers
+      if (isSprinterChaseActive) {
+        handleSprinterSurvival();
+      } else if (zombies.length >= HORDE_TRIGGER_COUNT) {
+        handleHordeSurvival();
+      }
 
-      const isHordeActive = zombies.length >= HORDE_TRIGGER_COUNT;
-      const isTooClose = nearestDist < DANGER_DISTANCE_METERS;
+      renderRadar();
+      requestAnimationFrame(gameLoop);
+    }
 
-      if (isTooClose || isHordeActive) {
-        if (!isUnderAttack) {
-          isUnderAttack = true;
-          alertStartTime = Date.now();
-          dangerScreen.style.borderWidth = "28px";
-          chaseText.style.display = "block";
-          musicChase.currentTime = 0;
-          musicChase.play().catch(() => {});
-        }
+    function handleSprinterSurvival() {
+      const elapsedSec = (Date.now() - threatStartTime) / 1000;
 
-        const elapsed = (Date.now() - alertStartTime) / 1000;
-        if (elapsed >= 20 && !isOverrun) {
-          isOverrun = true;
-          subWarning.innerText = "OVERRUN! INFECTION CRITICAL!";
-          subWarning.style.color = "#FF0033";
-        }
+      // Overrun if 20 seconds pass without hitting 17 MPH
+      if (elapsedSec >= 20 && !isOverrun) {
+        isOverrun = true;
+        alertTitle.innerText = "💀 TIME EXPIRED 💀";
+        alertDesc.innerText = "HIT 14 MPH TO ACCEPT FATE";
+        alertDesc.style.color = "#FF0033";
+      }
 
-        if (player.speedMph >= ESCAPE_SPEED_MPH) {
-          if (isOverrun) {
-            playSound(voiceEvil);
-            subWarning.innerText = "YOU ARE A ZOMBIE NOW!";
-            setTimeout(() => {
-              zombies = [];
-              isOverrun = false;
-              isUnderAttack = false;
-              alertStartTime = null;
-              subWarning.innerText = "SPRINT > 14 MPH TO ESCAPE!";
-              subWarning.style.color = "#fff";
-              dangerScreen.style.borderWidth = "0px";
-              chaseText.style.display = "none";
-              musicChase.pause();
-            }, 5000);
-          } else {
-            zombies = [];
-            isUnderAttack = false;
-            alertStartTime = null;
-            dangerScreen.style.borderWidth = "0px";
-            chaseText.style.display = "none";
-            musicChase.pause();
-          }
-        }
-      } else {
-        if (!isOverrun) {
-          isUnderAttack = false;
-          alertStartTime = null;
-          dangerScreen.style.borderWidth = "0px";
-          chaseText.style.display = "none";
-          musicChase.pause();
+      // Success: Beat sprinter with 17 MPH within 20s
+      if (!isOverrun && player.speedMph >= SPRINTER_ESCAPE_MPH) {
+        musicSprinter.pause();
+        musicSprinter.currentTime = 0;
+        alertTitle.innerText = "⚡ SPRINTER OUTRUN ⚡";
+        alertDesc.innerText = "BOARD CLEARED!";
+        setTimeout(() => resetGameState(), 3000);
+      }
+
+      // Failure: Overrun, hits >= 14 MPH -> Evil voice triggers
+      if (isOverrun && player.speedMph >= ESCAPE_SPEED_MPH) {
+        musicSprinter.pause();
+        musicSprinter.currentTime = 0;
+        playSound(voiceEvil);
+        alertTitle.innerText = "☠ TOO LATE ☠";
+        alertDesc.innerText = "YOU ARE A ZOMBIE NOW!";
+        setTimeout(() => resetGameState(), 6000);
+      }
+    }
+
+    function handleHordeSurvival() {
+      if (!isHordeChaseActive) {
+        isHordeChaseActive = true;
+        threatStartTime = Date.now();
+        isOverrun = false;
+
+        alertBox.style.display = "block";
+        alertBox.style.background = "rgba(180, 0, 20, 0.95)";
+        alertBox.style.borderColor = "#FF0033";
+        alertBox.style.boxShadow = "0 0 30px rgba(255, 0, 51, 0.8), 0 0 15px #000";
+        alertTitle.innerText = "⚠ HORDE OUTBREAK ⚠";
+        alertDesc.innerText = "SPRINT > 14 MPH TO ESCAPE!";
+        alertDesc.style.color = "#FFE600";
+
+        musicChase.currentTime = 0;
+        musicChase.play().catch(() => {});
+      }
+
+      const elapsedSec = (Date.now() - threatStartTime) / 1000;
+      if (elapsedSec >= 20 && !isOverrun) {
+        isOverrun = true;
+        alertTitle.innerText = "💀 INFECTION CRITICAL 💀";
+        alertDesc.innerText = "YOU WERE OVERRUN!";
+      }
+
+      if (player.speedMph >= ESCAPE_SPEED_MPH) {
+        musicChase.pause();
+        musicChase.currentTime = 0;
+
+        if (isOverrun) {
+          playSound(voiceEvil);
+          alertTitle.innerText = "☠ TOO LATE ☠";
+          alertDesc.innerText = "YOU ARE A ZOMBIE NOW!";
+          setTimeout(() => resetGameState(), 6000);
+        } else {
+          alertTitle.innerText = "✓ ESCAPED";
+          alertDesc.innerText = "HORDE EVADED!";
+          setTimeout(() => resetGameState(), 3000);
         }
       }
     }
 
-    // --- RADAR RENDERING ---
-    let scanAngle = 0;
-    function drawRadar() {
+    function resetGameState() {
+      zombies = [];
+      countEl.innerText = "0";
+      isHordeChaseActive = false;
+      isSprinterChaseActive = false;
+      isOverrun = false;
+      threatStartTime = null;
+      alertBox.style.display = "none";
+      musicChase.pause();
+      musicChase.currentTime = 0;
+      musicSprinter.pause();
+      musicSprinter.currentTime = 0;
+    }
+
+    // --- RADAR DRAWING ---
+    function renderRadar() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const cx = canvas.width / 2;
       const cy = canvas.height / 2;
-      const radarMaxMeters = 100.0;
-      const currentLat = player.lat || 42.3314;
-      const currentLon = player.lon || -83.0458;
 
       ctx.strokeStyle = "rgba(0, 255, 102, 0.4)";
       ctx.lineWidth = 1.5;
       [30, 60, 90].forEach(r => {
         ctx.beginPath();
-        ctx.arc(cx, cy, (r / radarMaxMeters) * (cx - 8), 0, Math.PI * 2);
+        ctx.arc(cx, cy, (r / RADAR_MAX_METERS) * (cx - 8), 0, Math.PI * 2);
         ctx.stroke();
       });
 
+      // Direction indicator
+      ctx.strokeStyle = "rgba(0, 255, 102, 0.7)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, 8);
+      ctx.lineTo(cx, 16);
+      ctx.stroke();
+
+      // Sweep line
       scanAngle += 0.045;
       ctx.strokeStyle = "#00FF66";
       ctx.lineWidth = 2;
@@ -378,37 +501,44 @@
       ctx.lineTo(cx + Math.cos(scanAngle) * (cx - 8), cy + Math.sin(scanAngle) * (cy - 8));
       ctx.stroke();
 
+      // Center Player Indicator
       ctx.fillStyle = "#00E5FF";
       ctx.shadowColor = "#00E5FF";
       ctx.shadowBlur = 8;
       ctx.beginPath();
-      ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+      ctx.arc(cx, cy, 4.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
 
+      // Zombie Blips
       zombies.forEach(z => {
-        const d = getDistanceMeters(currentLat, currentLon, z.lat, z.lon);
-        if (d <= radarMaxMeters) {
-          const bearing = Math.atan2(z.lon - currentLon, z.lat - currentLat);
-          const drawDist = (d / radarMaxMeters) * (cx - 12);
-          const x = cx + drawDist * Math.sin(bearing);
-          const y = cy - drawDist * Math.cos(bearing);
+        if (z.dist <= RADAR_MAX_METERS) {
+          const relAngle = z.angle - player.headingRad;
+          const drawDist = (z.dist / RADAR_MAX_METERS) * (cx - 12);
+          const x = cx + drawDist * Math.sin(relAngle);
+          const y = cy - drawDist * Math.cos(relAngle);
 
-          ctx.fillStyle = "#FF0033";
-          ctx.shadowColor = "#FF0033";
-          ctx.shadowBlur = 10;
           ctx.beginPath();
-          ctx.arc(x, y, 6, 0, Math.PI * 2);
+          if (z.type === 'sprinter') {
+            // Neon Cyan Blue for Sprinter
+            ctx.fillStyle = "#00F0FF";
+            ctx.shadowColor = "#00F0FF";
+            ctx.shadowBlur = 14;
+            ctx.arc(x, y, 7.5, 0, Math.PI * 2);
+          } else {
+            // Red for standard zombies
+            ctx.fillStyle = "#FF0033";
+            ctx.shadowColor = "#FF0033";
+            ctx.shadowBlur = 10;
+            ctx.arc(x, y, 6, 0, Math.PI * 2);
+          }
           ctx.fill();
           ctx.shadowBlur = 0;
         }
       });
-
-      requestAnimationFrame(drawRadar);
     }
 
-    setInterval(evaluateSurvivalState, 1000);
-    drawRadar();
+    requestAnimationFrame(gameLoop);
   </script>
 </body>
 </html>

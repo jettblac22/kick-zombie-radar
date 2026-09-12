@@ -19,7 +19,7 @@
       user-select: none;
     }
 
-    /* Pinned Bottom-Right */
+    /* Pinned Bottom-Right Corner */
     #hud-container {
       position: absolute;
       bottom: 24px;
@@ -167,6 +167,7 @@
     let hordeDeadline = null;
     let sprinterDeadline = null;
     let isZombieState = false;
+    let isDustingZombies = false; // Escape visual trigger
 
     const canvas = document.getElementById('radar');
     const ctx = canvas.getContext('2d');
@@ -177,7 +178,7 @@
     const alertTimer = document.getElementById('alert-timer');
     const alertDesc = document.getElementById('alert-desc');
 
-    // --- AUTOMATIC AUDIO ENGINE (NO CLICK REQUIRED) ---
+    // --- SILENT PRELOAD AUDIO PIPELINE ---
     function createTrack(filename, loop = false) {
       const a = new Audio(filename);
       a.preload = 'auto';
@@ -190,14 +191,18 @@
     const musicChase = createTrack('chase.m4a', true);
     const voiceEvil = createTrack('evil_voice.m4a');
 
-    // Auto-unlock tracks in the background on load
+    // Primed muted to prevent initial overlapping audio blast
     [sfxDunn, musicChase, voiceEvil].forEach(track => {
+      track.muted = true;
       const p = track.play();
       if (p !== undefined) {
         p.then(() => {
           track.pause();
           track.currentTime = 0;
-        }).catch(() => {});
+          track.muted = false;
+        }).catch(() => {
+          track.muted = false;
+        });
       }
     });
 
@@ -209,7 +214,7 @@
       }
     }
 
-    // --- GPS HARDWARE ---
+    // --- HARDWARE GPS TELEMETRY ---
     let lastGpsLat = null;
     let lastGpsLon = null;
 
@@ -244,22 +249,27 @@
       );
     }
 
-    // --- AUTOMATIC SPAWNING ---
+    // --- SPAWNING SYSTEM WITH SPREAD-OUT DISTANCES ---
     function spawnZombie(forceSprinter = false) {
       if (isZombieState) return;
 
       const isSprinter = forceSprinter || (Math.random() < 0.03);
       const isAmbush = isSprinter ? false : (Math.random() < 0.20);
+      
+      // Keep rear pack well spread out in an arc behind you
       const relAngle = isAmbush 
         ? (Math.random() - 0.5) * (Math.PI / 2) 
-        : Math.PI + (Math.random() - 0.5) * 1.4;
+        : Math.PI + (Math.random() - 0.5) * 1.8;
+
+      // Unique holding distance for each zombie so they don't bunch into a clump
+      const personalHoldDist = 38 + Math.random() * 26; // Follows 38m - 64m back
 
       zombies.push({
         id: Date.now() + Math.random(),
-        dist: 75 + Math.random() * 20,
+        dist: 85 + Math.random() * 15,
+        targetHoldDist: personalHoldDist,
         relAngle: relAngle,
         mode: isAmbush ? 'charge' : 'chase',
-        speed: isSprinter ? 0.24 : (isAmbush ? 0.28 : 0.075),
         type: isSprinter ? 'sprinter' : 'normal'
       });
 
@@ -303,7 +313,7 @@
       alertDesc.style.color = "#00E5FF";
     }
 
-    // --- GAME ENGINE LOOP ---
+    // --- GAME ENGINE & DYNAMIC DISTANCE LOOP ---
     let lastTime = performance.now();
     let scanAngle = 0;
 
@@ -311,30 +321,43 @@
       const dt = (now - lastTime) / 1000;
       lastTime = now;
 
-      // Smooth heading lerp
+      // Heading smoothing
       let diff = player.targetHeading - player.headingRad;
       while (diff < -Math.PI) diff += Math.PI * 2;
       while (diff > Math.PI) diff -= Math.PI * 2;
       player.headingRad += diff * 0.05;
 
-      // Move zombies
+      // Distance & Swarm Mechanics
       zombies.forEach((z) => {
-        if (z.mode === 'charge') {
-          z.dist -= (z.speed * 60) * dt;
-          if (z.dist < 18) {
-            z.mode = 'chase';
-            z.speed = 0.08;
-            z.relAngle = Math.PI + (Math.random() - 0.5) * 0.6;
-            z.dist = 22;
-          }
-        } else {
-          z.dist -= (z.speed * 35) * dt;
-          if (z.dist < 9) z.dist = 9;
+        if (isDustingZombies) {
+          // ESCAPED: Rapidly drop behind and disappear off radar edge
+          z.dist += (35 + Math.random() * 20) * dt;
+          return;
+        }
 
-          let angleDiff = Math.PI - z.relAngle;
-          while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-          while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-          z.relAngle += angleDiff * (z.type === 'sprinter' ? 0.04 : 0.015);
+        if (isSprinterActive) {
+          // Sprinter actively sprints to zero distance over the 20-second clock
+          const progress = Math.max(0, (sprinterDeadline - Date.now()) / (20 * 1000));
+          const targetDist = z.type === 'sprinter' ? (progress * 55) : (progress * z.targetHoldDist);
+          z.dist += (targetDist - z.dist) * (0.08);
+        } else if (isHordeActive) {
+          // Horde actively closes in from 45s down to 0s
+          const progress = Math.max(0, (hordeDeadline - Date.now()) / (HORDE_TIME_LIMIT_SEC * 1000));
+          const targetDist = progress * (z.targetHoldDist + 5);
+          z.dist += (targetDist - z.dist) * (0.06);
+        } else {
+          // PRE-HORDE: Maintain comfortable holding gap behind player
+          if (z.mode === 'charge') {
+            z.dist -= 18 * dt;
+            if (z.dist <= z.targetHoldDist) {
+              z.mode = 'chase';
+              z.relAngle = Math.PI + (Math.random() - 0.5) * 1.2;
+            }
+          } else {
+            // Smoothly ease to trailing distance
+            z.dist += (z.targetHoldDist - z.dist) * (0.04);
+            if (z.dist < 28) z.dist = 28; // Strict minimum gap before horde starts
+          }
         }
       });
 
@@ -352,30 +375,25 @@
         return;
       }
 
-      // 2. BLUE SPRINTER STATE (20s Limit)
+      // 2. BLUE SPRINTER ESCAPE CHECK
       if (isSprinterActive) {
         const remainingMs = sprinterDeadline - Date.now();
         const remSec = Math.max(0, Math.ceil(remainingMs / 1000));
         alertTimer.innerText = "00:" + (remSec < 10 ? "0" : "") + remSec;
 
-        if (player.speedMph >= SPRINTER_ESCAPE_MPH) {
-          musicChase.pause();
-          musicChase.currentTime = 0;
-          alertTitle.innerText = "⚡ SPRINTER EVADED ⚡";
-          alertDesc.innerText = "BOARD CLEARED!";
-          alertTimer.innerText = "ESCAPED";
-          setTimeout(() => resetBoard(), 2500);
+        if (player.speedMph >= SPRINTER_ESCAPE_MPH && !isDustingZombies) {
+          triggerEscapeSequence("⚡ SPRINTER EVADED ⚡", "BOARD CLEARED!");
           return;
         }
 
-        if (remSec <= 0) {
+        if (remSec <= 0 && !isDustingZombies) {
           triggerInfectionFail();
         }
         return;
       }
 
-      // 3. HORDE MODE (10+ Zombies, 45-Second Countdown)
-      if (zombies.length >= HORDE_TRIGGER_COUNT && !isHordeActive) {
+      // 3. HORDE ESCAPE CHECK (10+ Zombies)
+      if (zombies.length >= HORDE_TRIGGER_COUNT && !isHordeActive && !isDustingZombies) {
         isHordeActive = true;
         hordeDeadline = Date.now() + (HORDE_TIME_LIMIT_SEC * 1000);
 
@@ -398,26 +416,39 @@
         const secs = totalSec % 60;
         alertTimer.innerText = (mins < 10 ? "0" : "") + mins + ":" + (secs < 10 ? "0" : "") + secs;
 
-        if (player.speedMph >= HORDE_ESCAPE_MPH) {
-          musicChase.pause();
-          musicChase.currentTime = 0;
-          alertTitle.innerText = "✓ ESCAPED";
-          alertDesc.innerText = "HORDE EVADED!";
-          alertTimer.innerText = "CLEARED";
-          setTimeout(() => resetBoard(), 3000);
+        // Met escape speed: fling zombies backward off the screen
+        if (player.speedMph >= HORDE_ESCAPE_MPH && !isDustingZombies) {
+          triggerEscapeSequence("✓ ESCAPED", "LEFT IN THE DUST!");
           return;
         }
 
-        if (totalSec <= 0) {
+        // Timer hit zero: horde overruns the center
+        if (totalSec <= 0 && !isDustingZombies) {
           triggerInfectionFail();
         }
       }
+    }
+
+    function triggerEscapeSequence(titleText, descText) {
+      isDustingZombies = true;
+      musicChase.pause();
+      musicChase.currentTime = 0;
+
+      alertTitle.innerText = titleText;
+      alertDesc.innerText = descText;
+      alertTimer.innerText = "CLEARED";
+
+      // 1.8 seconds of visual acceleration away before wiping the array
+      setTimeout(() => {
+        resetBoard();
+      }, 1800);
     }
 
     function triggerInfectionFail() {
       isZombieState = true;
       isHordeActive = false;
       isSprinterActive = false;
+      isDustingZombies = false;
 
       musicChase.pause();
       musicChase.currentTime = 0;
@@ -438,6 +469,7 @@
       isHordeActive = false;
       isSprinterActive = false;
       isZombieState = false;
+      isDustingZombies = false;
       hordeDeadline = null;
       sprinterDeadline = null;
       alertBox.style.display = "none";
@@ -451,6 +483,7 @@
       const cx = canvas.width / 2;
       const cy = canvas.height / 2;
 
+      // Range rings
       ctx.strokeStyle = "rgba(0, 255, 102, 0.4)";
       ctx.lineWidth = 1.5;
       [30, 60, 90].forEach(r => {
@@ -459,6 +492,7 @@
         ctx.stroke();
       });
 
+      // Directional arrow (Top is forward)
       ctx.strokeStyle = "rgba(0, 255, 102, 0.7)";
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -466,6 +500,7 @@
       ctx.lineTo(cx, 16);
       ctx.stroke();
 
+      // Sweeper
       scanAngle += 0.045;
       ctx.strokeStyle = "#00FF66";
       ctx.lineWidth = 2;
@@ -474,6 +509,7 @@
       ctx.lineTo(cx + Math.cos(scanAngle) * (cx - 8), cy + Math.sin(scanAngle) * (cy - 8));
       ctx.stroke();
 
+      // Player Indicator (Cyan if alive, Crimson if infected)
       ctx.fillStyle = isZombieState ? "#FF0033" : "#00E5FF";
       ctx.shadowColor = ctx.fillStyle;
       ctx.shadowBlur = 8;
@@ -482,6 +518,7 @@
       ctx.fill();
       ctx.shadowBlur = 0;
 
+      // Zombie Blips
       zombies.forEach(z => {
         if (z.dist <= RADAR_MAX_METERS) {
           const drawDist = (z.dist / RADAR_MAX_METERS) * (cx - 12);

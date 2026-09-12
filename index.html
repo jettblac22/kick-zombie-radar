@@ -123,7 +123,7 @@
     <div id="chase-text" class="chase-warning">⚠ HORDE OUTBREAK ⚠<br><span id="sub-warning" style="font-size: 26px; color: #fff;">SPRINT > 14 MPH TO ESCAPE!</span></div>
   </div>
 
-  <div id="hud-container" title="Tap to test spawn">
+  <div id="hud-container" title="Single Tap: Spawn | Double Tap: Simulate 15 MPH Escape">
     <div class="hud-title">ZOMBIE ESCAPE</div>
     <canvas id="radar" width="200" height="200"></canvas>
     <div class="telemetry-bar">
@@ -157,115 +157,44 @@
     const chaseText = document.getElementById('chase-text');
     const subWarning = document.getElementById('sub-warning');
 
-    // --- AUDIO & MUSIC ENGINE ---
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    let musicOscs = [];
-    let musicGain = null;
-    let musicInterval = null;
-
-    // Cinematic Horror "DUNNN!" Stinger
-    function playHorrorDunn() {
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-      const t = audioCtx.currentTime;
-
-      // Low brass sub impact
-      const osc1 = audioCtx.createOscillator();
-      const osc2 = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-
-      osc1.type = 'sawtooth';
-      osc1.frequency.setValueAtTime(65, t);
-      osc1.frequency.exponentialRampToValueAtTime(32, t + 1.2);
-
-      osc2.type = 'triangle';
-      osc2.frequency.setValueAtTime(68.5, t); // Metallic dissonance beating
-      osc2.frequency.exponentialRampToValueAtTime(31, t + 1.2);
-
-      gain.gain.setValueAtTime(0.45, t);
-      gain.gain.exponentialRampToValueAtTime(0.01, t + 1.2);
-
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(audioCtx.destination);
-
-      osc1.start(t);
-      osc2.start(t);
-      osc1.stop(t + 1.2);
-      osc2.stop(t + 1.2);
+    // --- REAL AUDIO FILES & IOS UNLOCK ENGINE (.m4a) ---
+    function createTrack(filename, loop = false) {
+      const a = new Audio(filename);
+      a.preload = 'auto';
+      a.loop = loop;
+      a.playsInline = true;
+      return a;
     }
 
-    // Procedural Haunting Chase Score
-    function startHauntingMusic() {
-      if (musicGain) return; // Already running
-      if (audioCtx.state === 'suspended') audioCtx.resume();
+    const sfxDunn = createTrack('dunn.m4a');
+    const musicChase = createTrack('chase.m4a', true);
+    const voiceEvil = createTrack('evil_voice.m4a');
 
-      musicGain = audioCtx.createGain();
-      musicGain.gain.setValueAtTime(0.12, audioCtx.currentTime);
-      musicGain.connect(audioCtx.destination);
+    let audioUnlocked = false;
 
-      // Deep oscillating drone
-      const bass1 = audioCtx.createOscillator();
-      const bass2 = audioCtx.createOscillator();
-      bass1.type = 'sawtooth';
-      bass2.type = 'sine';
-      bass1.frequency.setValueAtTime(43.65, audioCtx.currentTime); // F1
-      bass2.frequency.setValueAtTime(46.25, audioCtx.currentTime); // F#1 (Tritone edge)
-
-      bass1.connect(musicGain);
-      bass2.connect(musicGain);
-      bass1.start();
-      bass2.start();
-      musicOscs = [bass1, bass2];
-
-      // Creepy staccato rhythm pulse
-      musicInterval = setInterval(() => {
-        if (!musicGain) return;
-        const pulseOsc = audioCtx.createOscillator();
-        const pulseGain = audioCtx.createGain();
-        pulseOsc.type = 'sawtooth';
-        pulseOsc.frequency.setValueAtTime(87.31 + Math.random() * 5, audioCtx.currentTime);
-        pulseGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-        pulseGain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.18);
-        pulseOsc.connect(pulseGain);
-        pulseGain.connect(audioCtx.destination);
-        pulseOsc.start();
-        pulseOsc.stop(audioCtx.currentTime + 0.18);
-      }, 420);
+    function unlockAudioChannels() {
+      if (audioUnlocked) return;
+      [sfxDunn, musicChase, voiceEvil].forEach(track => {
+        const p = track.play();
+        if (p !== undefined) {
+          p.then(() => {
+            track.pause();
+            track.currentTime = 0;
+          }).catch(() => {});
+        }
+      });
+      audioUnlocked = true;
     }
 
-    function intensifyMusic() {
-      if (musicGain) {
-        musicGain.gain.linearRampToValueAtTime(0.28, audioCtx.currentTime + 1.0);
+    function playSound(audio) {
+      audio.currentTime = 0;
+      const promise = audio.play();
+      if (promise !== undefined) {
+        promise.catch(err => console.warn('Playback blocked:', err));
       }
     }
 
-    function stopHauntingMusic() {
-      if (musicInterval) {
-        clearInterval(musicInterval);
-        musicInterval = null;
-      }
-      if (musicGain) {
-        musicGain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
-        setTimeout(() => {
-          musicOscs.forEach(o => { try { o.stop(); } catch(e){} });
-          musicOscs = [];
-          musicGain = null;
-        }, 400);
-      }
-    }
-
-    // Rasping Evil Voice Engine
-    function speakEvilVoice(text) {
-      if (!('speechSynthesis' in window)) return;
-      window.speechSynthesis.cancel();
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.pitch = 0.2;  // Demonic pitch
-      utter.rate = 0.75;  // Slow, menacing crawl
-      utter.volume = 1.0;
-      window.speechSynthesis.speak(utter);
-    }
-
-    // --- HARDWARE GPS & TELEMETRY ---
+    // --- HARDWARE GPS TELEMETRY ---
     if ('geolocation' in navigator) {
       navigator.geolocation.watchPosition(
         (pos) => {
@@ -316,10 +245,10 @@
       }
 
       countEl.innerText = zombies.length;
-      playHorrorDunn();
+      playSound(sfxDunn);
     }
 
-    // Continuous random timer (30s to 120s)
+    // Random spawn loop: every 30s to 120s
     function scheduleNextSpawn() {
       const nextDelayMs = (30 + Math.random() * 90) * 1000;
       setTimeout(() => {
@@ -329,12 +258,29 @@
     }
     scheduleNextSpawn();
 
-    // Tap HUD box to manual test
+    // Tap radar HUD:
+    // Single Tap = Spawn a zombie & play dunn sound
+    // Double Tap = Simulate sprinting 15.5 MPH to test escape
+    let lastTap = 0;
     document.getElementById('hud-container').addEventListener('click', () => {
-      triggerZombieSpawnEvent();
+      unlockAudioChannels();
+
+      const now = Date.now();
+      if (now - lastTap < 350) {
+        player.speedMph = 15.5;
+        speedEl.innerText = "15.5";
+        evaluateSurvivalState();
+        setTimeout(() => {
+          player.speedMph = 0.0;
+          speedEl.innerText = "0.0";
+        }, 1500);
+      } else {
+        triggerZombieSpawnEvent();
+      }
+      lastTap = now;
     });
 
-    // --- SURVIVAL LOOP & ESCAPE / OVERRUN LOGIC ---
+    // --- SURVIVAL ENGINE & ESCAPE LOGIC ---
     function evaluateSurvivalState() {
       let nearestDist = Infinity;
       const currentLat = player.lat || 42.3314;
@@ -360,26 +306,22 @@
           alertStartTime = Date.now();
           dangerScreen.style.borderWidth = "28px";
           chaseText.style.display = "block";
-          startHauntingMusic();
+          musicChase.currentTime = 0;
+          musicChase.play().catch(() => {});
         }
 
-        // Check if 20 seconds elapsed without hitting 14 MPH
         const elapsed = (Date.now() - alertStartTime) / 1000;
         if (elapsed >= 20 && !isOverrun) {
           isOverrun = true;
-          intensifyMusic();
-          subWarning.innerText = "OVERRUN! INFECTION SYSTEM CRITICAL!";
+          subWarning.innerText = "OVERRUN! INFECTION CRITICAL!";
           subWarning.style.color = "#FF0033";
         }
 
-        // Player hits 14 MPH escape threshold
         if (player.speedMph >= ESCAPE_SPEED_MPH) {
           if (isOverrun) {
-            // Player failed the 20s window: Evil voice trigger
-            speakEvilVoice("It's too late... you are a zombie now!");
+            playSound(voiceEvil);
             subWarning.innerText = "YOU ARE A ZOMBIE NOW!";
             setTimeout(() => {
-              // Reset game state after infection
               zombies = [];
               isOverrun = false;
               isUnderAttack = false;
@@ -388,16 +330,15 @@
               subWarning.style.color = "#fff";
               dangerScreen.style.borderWidth = "0px";
               chaseText.style.display = "none";
-              stopHauntingMusic();
+              musicChase.pause();
             }, 5000);
           } else {
-            // Clean Escape within the 20s window
             zombies = [];
             isUnderAttack = false;
             alertStartTime = null;
             dangerScreen.style.borderWidth = "0px";
             chaseText.style.display = "none";
-            stopHauntingMusic();
+            musicChase.pause();
           }
         }
       } else {
@@ -406,7 +347,7 @@
           alertStartTime = null;
           dangerScreen.style.borderWidth = "0px";
           chaseText.style.display = "none";
-          stopHauntingMusic();
+          musicChase.pause();
         }
       }
     }
@@ -421,7 +362,6 @@
       const currentLat = player.lat || 42.3314;
       const currentLon = player.lon || -83.0458;
 
-      // Radar Range Rings
       ctx.strokeStyle = "rgba(0, 255, 102, 0.4)";
       ctx.lineWidth = 1.5;
       [30, 60, 90].forEach(r => {
@@ -430,7 +370,6 @@
         ctx.stroke();
       });
 
-      // Scan Sweep
       scanAngle += 0.045;
       ctx.strokeStyle = "#00FF66";
       ctx.lineWidth = 2;
@@ -439,7 +378,6 @@
       ctx.lineTo(cx + Math.cos(scanAngle) * (cx - 8), cy + Math.sin(scanAngle) * (cy - 8));
       ctx.stroke();
 
-      // Center Player Blip
       ctx.fillStyle = "#00E5FF";
       ctx.shadowColor = "#00E5FF";
       ctx.shadowBlur = 8;
@@ -448,7 +386,6 @@
       ctx.fill();
       ctx.shadowBlur = 0;
 
-      // Approaching Red Zombie Blips
       zombies.forEach(z => {
         const d = getDistanceMeters(currentLat, currentLon, z.lat, z.lon);
         if (d <= radarMaxMeters) {

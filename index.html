@@ -181,7 +181,7 @@
       playAlarmDrone(false);
     }
 
-// --- 5. ROBUST KICK CHAT INTEGRATION ---
+// --- 5. DIAGNOSTIC KICK CHAT INTEGRATION ---
     const KICK_KEY = '32cbd69e4b950ba42379';
     const pusher = new Pusher(KICK_KEY, {
       cluster: 'us2',
@@ -194,54 +194,36 @@
     });
 
     pusher.connection.bind('connected', () => {
-      // Turns green the moment socket handshakes with Kick
       countEl.style.color = '#00FF66';
       countEl.style.textShadow = '0 0 8px #00FF66';
     });
 
-    pusher.connection.bind('unavailable', () => {
-      countEl.style.color = '#FF0033';
-    });
-
-    pusher.connection.bind('failed', () => {
-      countEl.style.color = '#FF0033';
-    });
-
-    function parseAndTrigger(rawData) {
+    // Universal String Scanner: Checks ANY incoming text/object for !zombie
+    function inspectAndTrigger(event, rawData) {
+      let stringified = "";
       try {
-        let data = rawData;
-        if (typeof data === 'string') {
-          data = JSON.parse(data);
-        }
-        
-        // Kick payloads frequently wrap the chat message inside another nested JSON or string
-        let messageText = '';
-        if (data.content) messageText = data.content;
-        else if (data.message && typeof data.message === 'string') messageText = data.message;
-        else if (data.message && data.message.content) messageText = data.message.content;
+        stringified = typeof rawData === "string" ? rawData : JSON.stringify(rawData);
+      } catch(e) {
+        stringified = String(rawData);
+      }
 
-        if (messageText.toLowerCase().trim().includes('!zombie')) {
-          spawnZombie("fast");
-        }
-      } catch (err) {
-        // Fallback: check raw string if JSON parsing missed
-        if (typeof rawData === 'string' && rawData.toLowerCase().includes('!zombie')) {
-          spawnZombie("fast");
-        }
+      // If anything matching !zombie comes down the pipe, trigger immediately
+      if (stringified.toLowerCase().includes("!zombie")) {
+        spawnZombie("fast");
       }
     }
 
-    // Subscribe to both current v2 format and legacy channel format
-    const channelV2 = pusher.subscribe(`chatrooms.${KICK_CHATROOM_ID}.v2`);
-    const channelV1 = pusher.subscribe(`chatroom_${KICK_CHATROOM_ID}`);
+    // Subscribe to Kick's active chat channels
+    const chV2 = pusher.subscribe(`chatrooms.${KICK_CHATROOM_ID}.v2`);
+    const chV1 = pusher.subscribe(`chatroom_${KICK_CHATROOM_ID}`);
+    const chChannel = pusher.subscribe(`channel.${KICK_CHATROOM_ID}`);
 
-    channelV2.bind('App\\Events\\ChatMessageEvent', parseAndTrigger);
-    channelV1.bind('App\\Events\\ChatMessageEvent', parseAndTrigger);
-    channelV2.bind('ChatMessageEvent', parseAndTrigger);
-
-    // Global listener: catches the message regardless of how the event is named
-    channelV2.bind_global((eventName, data) => {
-      parseAndTrigger(data);
+    // Catch EVERYTHING Pusher sends across all subscribed channels
+    pusher.bind_global((eventName, data) => {
+      // Ignore internal pusher handshake heartbeats
+      if (!eventName.startsWith('pusher:')) {
+        inspectAndTrigger(eventName, data);
+      }
     });
 
     // --- 6. TAP-TO-TEST TRIGGER ---

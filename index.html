@@ -21,7 +21,7 @@
       user-select: none;
     }
 
-    /* Pinned Bottom-Right Corner - Radar */
+    /* Radar HUD - Bottom Right */
     #hud-container {
       position: absolute;
       bottom: 20px;
@@ -90,7 +90,7 @@
       font-family: "Arial Black", Impact, sans-serif;
     }
 
-    /* Outbreak Alert Banner - To the Left of Radar */
+    /* Alert Banner - Left of Radar */
     #stream-alert-box {
       display: none;
       position: absolute;
@@ -143,7 +143,7 @@
       padding: 0;
     }
 
-    /* 5-SLOT INVENTORY (Bottom Left) */
+    /* 5-Slot Inventory - Bottom Left */
     #minecraft-inventory {
       position: absolute;
       bottom: 20px;
@@ -196,7 +196,7 @@
       text-shadow: 0 0 4px #000;
     }
 
-    /* Notification & Combat Toast - Positioned directly above Inventory */
+    /* Notification & Combat Toast */
     #item-combat-log {
       display: none;
       position: absolute;
@@ -238,7 +238,7 @@
   <!-- Notification & Combat Toast -->
   <div id="item-combat-log"></div>
 
-  <!-- Minecraft 5-Slot Inventory (Bottom Left) -->
+  <!-- 5-Slot Inventory (Bottom Left) -->
   <div id="minecraft-inventory">
     <div class="mc-slot" id="slot-0"></div>
     <div class="mc-slot" id="slot-1"></div>
@@ -326,13 +326,12 @@
       track.play().catch(() => {});
     }
 
-    // Web Audio API Procedural "Ding" for finding an item
+    // Web Audio API Synthesizer (Chime & Break Stinger)
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
     function playDing() {
       try {
-        if (audioCtx.state === 'suspended') {
-          audioCtx.resume();
-        }
+        if (audioCtx.state === 'suspended') audioCtx.resume();
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = 'sine';
@@ -345,42 +344,110 @@
         osc.start();
         osc.stop(audioCtx.currentTime + 0.6);
       } catch (e) {
-        console.warn('WebAudio Ding failed:', e);
+        console.warn('Ding failed:', e);
       }
     }
 
-    // Hardware GPS Telemetry
+    function playItemBreakSound() {
+      try {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const t = audioCtx.currentTime;
+        
+        // Metallic snap (Square wave dropping fast)
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(420, t);
+        osc.frequency.exponentialRampToValueAtTime(80, t + 0.15);
+        gain.gain.setValueAtTime(0.4, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(t);
+        osc.stop(t + 0.18);
+
+        // Crunchy impact burst (Buffer noise)
+        const bufferSize = audioCtx.sampleRate * 0.12;
+        const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = buffer;
+        const noiseGain = audioCtx.createGain();
+        noiseGain.gain.setValueAtTime(0.35, t);
+        noiseGain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+        noise.connect(noiseGain);
+        noiseGain.connect(audioCtx.destination);
+        noise.start(t);
+      } catch (e) {
+        console.warn('Break sound failed:', e);
+      }
+    }
+
+    // --- DUAL-ENGINE GPS (UNCAPPED SPEED + DELTA FALLBACK) ---
     let lastGpsLat = null;
     let lastGpsLon = null;
+    let lastGpsTime = null;
+
+    function getDistanceMeters(lat1, lon1, lat2, lon2) {
+      const R = 6371000;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
 
     if ('geolocation' in navigator) {
       navigator.geolocation.watchPosition(
         (pos) => {
           const newLat = pos.coords.latitude;
           const newLon = pos.coords.longitude;
+          const nowMs = pos.timestamp || Date.now();
 
-          if (lastGpsLat !== null && lastGpsLon !== null) {
+          let reportedMph = 0;
+          if (pos.coords.speed !== null && !isNaN(pos.coords.speed) && pos.coords.speed >= 0) {
+            reportedMph = pos.coords.speed * 2.23694;
+          }
+
+          let calculatedMph = 0;
+          if (lastGpsLat !== null && lastGpsLon !== null && lastGpsTime !== null) {
+            const timeDeltaSec = (nowMs - lastGpsTime) / 1000;
+            if (timeDeltaSec > 0.2 && timeDeltaSec < 4.0) {
+              const distMeters = getDistanceMeters(lastGpsLat, lastGpsLon, newLat, newLon);
+              calculatedMph = (distMeters / timeDeltaSec) * 2.23694;
+            }
+
             const dY = newLat - lastGpsLat;
             const dX = (newLon - lastGpsLon) * Math.cos(newLat * Math.PI / 180);
             if (Math.hypot(dY, dX) > 0.00001) {
               player.targetHeading = Math.atan2(dX, dY);
             }
           }
+
           if (pos.coords.heading !== null && !isNaN(pos.coords.heading)) {
             player.targetHeading = pos.coords.heading * Math.PI / 180;
           }
 
+          let finalMph = reportedMph;
+          if (calculatedMph > reportedMph && calculatedMph < 45.0) {
+            finalMph = calculatedMph;
+          }
+
           lastGpsLat = newLat;
           lastGpsLon = newLon;
+          lastGpsTime = nowMs;
           player.lat = newLat;
           player.lon = newLon;
 
-          const rawSpeed = pos.coords.speed || 0;
-          player.speedMph = parseFloat((rawSpeed * 2.23694).toFixed(1));
+          player.speedMph = parseFloat(finalMph.toFixed(1));
           speedEl.innerText = player.speedMph;
         },
         (err) => console.warn('GPS Error: ', err),
-        { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 4000 }
       );
     }
 
@@ -408,7 +475,7 @@
       combatToast.style.color = textColor;
       setTimeout(() => {
         combatToast.style.display = 'none';
-      }, 4400); // 4.4 seconds display time
+      }, 4400);
     }
 
     function addRandomWeapon() {
@@ -426,9 +493,9 @@
       showToast(`📦 YOU FOUND A ${chosen.name}!`, '#00E5FF', '#00E5FF');
     }
 
-    // WEAPON SPAWN: Random between 60 and 120 seconds
+    // Weapon Drops: 60 - 120s
     function scheduleWeaponDrop() {
-      const nextDelaySec = 60 + Math.random() * 60; // 60 to 120s
+      const nextDelaySec = 60 + Math.random() * 60;
       setTimeout(() => {
         addRandomWeapon();
         scheduleWeaponDrop();
@@ -436,12 +503,9 @@
     }
     scheduleWeaponDrop();
 
-    // Starter weapon pickup after 10 seconds for initial test
-    setTimeout(() => {
-      addRandomWeapon();
-    }, 10000);
+    setTimeout(() => { addRandomWeapon(); }, 10000);
 
-    // ITEM USAGE: 10-Second Wait, 20% Hit Chance, Honda Multi-kill (up to 5)
+    // Item Usage: 10-Second Delay, 20% Hit Chance, Honda Multi-kill
     function scheduleItemUse() {
       if (isUsingWeapon || inventory.length === 0 || zombies.length === 0 || isZombieState) return;
 
@@ -470,40 +534,42 @@
             showToast(`⚔ KILLED ZOMBIE WITH ${item.name}!`, '#00FF66', '#00FF66');
           }
         } else {
+          playItemBreakSound();
           showToast(`💥 OH NO THAT ${item.name} BROKE!`, '#FF0033', '#FF4444');
         }
 
         isUsingWeapon = false;
 
-        // If more zombies and weapons remain, queue next attack
         if (inventory.length > 0 && zombies.length > 0) {
           scheduleItemUse();
         }
-      }, 10000); // 10 second delay before attack
+      }, 10000);
     }
 
-    // --- ZOMBIE SPAWNER ---
+    // --- ZOMBIE SPAWNER & POSITIONING LOGIC ---
     function spawnZombie(forceSprinter = false) {
       if (isZombieState) return;
 
       const isSprinter = forceSprinter || (Math.random() < 0.03);
       const isAmbush = isSprinter ? false : (Math.random() < 0.20);
       
+      // Frontal ambush or rear pursuer
       const baseRelAngle = isAmbush 
-        ? (Math.random() - 0.5) * (Math.PI / 2) 
-        : Math.PI + (Math.random() - 0.5) * 1.5;
+        ? (Math.random() - 0.5) * 0.8  // Narrow frontal cone
+        : Math.PI + (Math.random() - 0.5) * 1.4; // Rear arc
 
-      const personalHoldDist = isSprinter ? (10 + Math.random() * 6) : (14 + Math.random() * 12);
+      // Substantially further hold distance (26 to 42m)
+      const personalHoldDist = isSprinter ? (20 + Math.random() * 8) : (26 + Math.random() * 16);
 
       zombies.push({
         id: Date.now() + Math.random(),
-        dist: 88 + Math.random() * 10,
+        dist: 92 + Math.random() * 6, // Spawn near boundary
         targetHoldDist: personalHoldDist,
         relAngle: baseRelAngle,
-        mode: isAmbush ? 'charge' : 'chase',
+        mode: isAmbush ? 'ambush' : 'chase',
         type: isSprinter ? 'sprinter' : 'normal',
         wiggleSeed: Math.random() * 100,
-        wiggleFreq: 6.5 + Math.random() * 3.5
+        wiggleFreq: 4.5 + Math.random() * 2.5
       });
 
       countEl.innerText = zombies.length;
@@ -524,9 +590,9 @@
       }
     }
 
-    // ZOMBIE SPAWN: Random between 25 and 70 seconds
+    // Zombie Spawn Interval: 25 - 70s
     function scheduleSpawn() {
-      const nextSpawnSec = 25 + Math.random() * 45; // 25 to 70s
+      const nextSpawnSec = 25 + Math.random() * 45;
       setTimeout(() => {
         triggerHordeSpawn();
         scheduleSpawn();
@@ -550,7 +616,7 @@
       alertDesc.style.color = "#00E5FF";
     }
 
-    // --- ENGINE LOOP ---
+    // --- GAME ENGINE LOOP ---
     let lastTime = performance.now();
     let scanAngle = 0;
 
@@ -569,21 +635,35 @@
           return;
         }
 
+        // FRONTAL AMBUSH PASS-THROUGH LOGIC
+        if (z.mode === 'ambush') {
+          z.dist -= (22 * dt); // Charges directly toward player
+
+          // If close enough without a collision, swing behind into a chase
+          if (z.dist <= 16) {
+            z.mode = 'chase';
+            // Smoothly redirect relative angle to directly behind the player
+            z.relAngle = Math.PI + (Math.random() - 0.5) * 0.8;
+          }
+          return;
+        }
+
+        // REGULAR REAR PURSUIT LOGIC (Calmer, slower close rate)
         if (isSprinterActive) {
           const progress = Math.max(0, (sprinterDeadline - Date.now()) / (20 * 1000));
           const targetDist = z.type === 'sprinter' ? (progress * 18) : (progress * z.targetHoldDist);
-          z.dist += (targetDist - z.dist) * (0.09);
+          z.dist += (targetDist - z.dist) * 0.06;
         } else if (isHordeActive) {
           const progress = Math.max(0, (hordeDeadline - Date.now()) / (HORDE_TIME_LIMIT_SEC * 1000));
           const targetDist = progress * z.targetHoldDist;
-          z.dist += (targetDist - z.dist) * (0.07);
+          z.dist += (targetDist - z.dist) * 0.05;
         } else {
+          // Slow approach down from 28m/s to 10m/s
           if (z.dist > z.targetHoldDist + 1) {
-            z.dist -= (28 * dt);
+            z.dist -= (10 * dt);
           } else {
-            z.dist += (z.targetHoldDist - z.dist) * 0.05;
+            z.dist += (z.targetHoldDist - z.dist) * 0.03;
           }
-          if (z.dist < 10) z.dist = 10;
         }
       });
 
@@ -705,7 +785,7 @@
       renderInventory();
     }
 
-    // High-Resolution Radar Render
+    // Radar Canvas Render
     function renderRadar(timeSec) {
       ctx.clearRect(0, 0, displaySize, displaySize);
       const cx = displaySize / 2;
@@ -744,7 +824,7 @@
 
       zombies.forEach(z => {
         if (z.dist <= RADAR_MAX_METERS) {
-          const wiggleAngleOffset = Math.sin((timeSec * z.wiggleFreq) + z.wiggleSeed) * 0.08;
+          const wiggleAngleOffset = Math.sin((timeSec * z.wiggleFreq) + z.wiggleSeed) * 0.07;
           const currentRelAngle = z.relAngle + wiggleAngleOffset;
 
           const distJitter = Math.cos((timeSec * z.wiggleFreq * 1.5) + z.wiggleSeed) * 0.75;

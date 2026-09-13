@@ -96,11 +96,11 @@
       position: absolute;
       bottom: 24px;
       right: 254px;
-      width: 270px;
+      width: 250px;
       background: rgba(180, 0, 20, 0.98);
       border: 3.5px solid #FF0033;
       border-radius: 14px;
-      padding: 12px 14px;
+      padding: 10px 12px;
       text-align: center;
       box-shadow: 0 0 35px rgba(255, 0, 51, 0.9), 0 0 20px #000;
       animation: pulse 0.4s infinite alternate;
@@ -108,7 +108,7 @@
     }
 
     .alert-main {
-      font-size: 17px;
+      font-size: 16px;
       line-height: 1.2;
       font-weight: 900;
       color: #FFFFFF;
@@ -121,7 +121,7 @@
     }
 
     .alert-timer {
-      font-size: 28px;
+      font-size: 26px;
       line-height: 1.1;
       font-weight: 900;
       color: #FFF;
@@ -132,7 +132,7 @@
     }
 
     .alert-sub {
-      font-size: 13px;
+      font-size: 12px;
       line-height: 1.2;
       font-weight: 900;
       color: #FFE600;
@@ -143,28 +143,27 @@
       padding: 0;
     }
 
-    /* ENLARGED 5-SLOT INVENTORY (Bottom Center) */
+    /* 5-SLOT INVENTORY (Bottom Left) */
     #minecraft-inventory {
       position: absolute;
       bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
+      left: 24px;
       display: flex;
-      gap: 8px;
+      gap: 6px;
       background: rgba(12, 18, 12, 0.85);
       border: 2.5px solid rgba(0, 255, 102, 0.6);
       border-radius: 14px;
-      padding: 8px 10px;
+      padding: 6px 8px;
       box-shadow: 0 0 25px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 255, 102, 0.35);
       z-index: 100;
     }
 
     .mc-slot {
-      width: 64px;
-      height: 64px;
-      background: rgba(0, 0, 0, 0.7);
+      width: 54px;
+      height: 54px;
+      background: rgba(0, 0, 0, 0.75);
       border: 2px solid rgba(255, 255, 255, 0.25);
-      border-radius: 10px;
+      border-radius: 8px;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -180,36 +179,35 @@
     }
 
     .mc-slot img {
-      width: 44px;
-      height: 44px;
+      width: 36px;
+      height: 36px;
       object-fit: contain;
       filter: drop-shadow(0 0 4px rgba(0, 255, 102, 0.7));
     }
 
     .mc-slot .slot-label {
-      font-size: 9px;
+      font-size: 8px;
       font-weight: 900;
       color: #00FF66;
       text-transform: uppercase;
       letter-spacing: 0.5px;
       font-family: "Arial Black", Impact, sans-serif;
-      margin-top: 2px;
+      margin-top: 1px;
       text-shadow: 0 0 4px #000;
     }
 
-    /* Notification & Combat Result Banner */
+    /* Notification & Combat Toast - Positioned directly above Inventory */
     #item-combat-log {
       display: none;
       position: absolute;
-      bottom: 105px;
-      left: 50%;
-      transform: translateX(-50%);
+      bottom: 95px;
+      left: 24px;
       background: rgba(0, 0, 0, 0.95);
       border: 2.5px solid #00FF66;
       border-radius: 10px;
-      padding: 8px 18px;
+      padding: 8px 16px;
       font-family: "Arial Black", Impact, sans-serif;
-      font-size: 16px;
+      font-size: 15px;
       letter-spacing: 1px;
       white-space: nowrap;
       z-index: 102;
@@ -218,8 +216,8 @@
     }
 
     @keyframes popIn {
-      from { transform: translateX(-50%) translateY(8px) scale(0.92); opacity: 0; }
-      to { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
+      from { transform: translateY(8px) scale(0.92); opacity: 0; }
+      to { transform: translateY(0) scale(1); opacity: 1; }
     }
 
     @keyframes pulse {
@@ -237,10 +235,10 @@
     <div class="alert-sub" id="alert-desc">SPRINT > 15 MPH TO ESCAPE!</div>
   </div>
 
-  <!-- Central Notification & Combat Toast -->
+  <!-- Notification & Combat Toast -->
   <div id="item-combat-log"></div>
 
-  <!-- Minecraft 5-Slot Inventory -->
+  <!-- Minecraft 5-Slot Inventory (Bottom Left) -->
   <div id="minecraft-inventory">
     <div class="mc-slot" id="slot-0"></div>
     <div class="mc-slot" id="slot-1"></div>
@@ -284,13 +282,14 @@
 
     // --- 5-SLOT INVENTORY SYSTEM ---
     const WEAPON_POOL = [
-      { name: 'HONDA',   file: 'honda.jpg' },
-      { name: 'BAT',     file: 'bat.jpg' },
-      { name: 'KNIFE',   file: 'knife.jpg' },
-      { name: 'SWORD',   file: 'sword.jpg' },
-      { name: 'SHOTGUN', file: 'shotgun.jpg' }
+      { name: 'HONDA',   file: 'honda.jpg', maxKills: 5 },
+      { name: 'BAT',     file: 'bat.jpg',   maxKills: 1 },
+      { name: 'KNIFE',   file: 'knife.jpg', maxKills: 1 },
+      { name: 'SWORD',   file: 'sword.jpg', maxKills: 1 },
+      { name: 'SHOTGUN', file: 'shotgun.jpg', maxKills: 1 }
     ];
     let inventory = [];
+    let isUsingWeapon = false;
 
     const canvas = document.getElementById('radar');
     const ctx = canvas.getContext('2d');
@@ -309,7 +308,7 @@
     canvas.height = displaySize * dpr;
     ctx.scale(dpr, dpr);
 
-    // --- STABLE AUDIO PIPELINE (NO SIMULTANEOUS AUTO-PLAY BURST) ---
+    // --- AUDIO PIPELINE ---
     function createTrack(filename, loop = false) {
       const a = new Audio(filename);
       a.preload = 'auto';
@@ -325,6 +324,29 @@
       if (!track) return;
       track.currentTime = 0;
       track.play().catch(() => {});
+    }
+
+    // Web Audio API Procedural "Ding"
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playDing() {
+      try {
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1174.66, audioCtx.currentTime); // D6
+        osc.frequency.exponentialRampToValueAtTime(1760.00, audioCtx.currentTime + 0.08); // A6
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.6);
+      } catch (e) {
+        console.warn('WebAudio Ding failed:', e);
+      }
     }
 
     // Hardware GPS Telemetry
@@ -386,7 +408,7 @@
       combatToast.style.color = textColor;
       setTimeout(() => {
         combatToast.style.display = 'none';
-      }, 2400);
+      }, 4400); // 4.4 seconds display time
     }
 
     function addRandomWeapon() {
@@ -400,12 +422,13 @@
       const chosen = WEAPON_POOL[Math.floor(Math.random() * WEAPON_POOL.length)];
       inventory.push(chosen);
       renderInventory();
+      playDing();
       showToast(`📦 YOU FOUND A ${chosen.name}!`, '#00E5FF', '#00E5FF');
     }
 
-    // Fast Weapon Drop Interval (60 to 90 seconds)
+    // 90 to 240 seconds spawn loop
     function scheduleWeaponDrop() {
-      const nextDelaySec = 60 + Math.random() * 30;
+      const nextDelaySec = 90 + Math.random() * 150; // 90 to 240s
       setTimeout(() => {
         addRandomWeapon();
         scheduleWeaponDrop();
@@ -413,29 +436,51 @@
     }
     scheduleWeaponDrop();
 
-    // Initial item find after 8 seconds
+    // Starter weapon pickup after 12 seconds for testing
     setTimeout(() => {
       addRandomWeapon();
-    }, 8000);
+    }, 12000);
 
-    // Item Usage: 20% Hit Chance vs Zombie
-    function attemptUseItemOnZombie() {
-      if (inventory.length === 0 || zombies.length === 0 || isZombieState) return;
+    // Item Usage: 10-Second Delay, 20% Hit Chance, Honda Multi-kill
+    function scheduleItemUse() {
+      if (isUsingWeapon || inventory.length === 0 || zombies.length === 0 || isZombieState) return;
 
-      const item = inventory.shift();
-      renderInventory();
+      isUsingWeapon = true;
+      setTimeout(() => {
+        // Re-verify state after 10-second wait
+        if (inventory.length === 0 || zombies.length === 0 || isZombieState) {
+          isUsingWeapon = false;
+          return;
+        }
 
-      const didHit = Math.random() < 0.20;
+        const item = inventory.shift();
+        renderInventory();
 
-      if (didHit) {
-        zombies.sort((a, b) => a.dist - b.dist);
-        zombies.shift();
-        countEl.innerText = zombies.length;
-        playSound(sfxDunn);
-        showToast(`⚔ KILLED ZOMBIE WITH ${item.name}!`, '#00FF66', '#00FF66');
-      } else {
-        showToast(`💥 OH NO THAT ${item.name} BROKE!`, '#FF0033', '#FF4444');
-      }
+        const didHit = Math.random() < 0.20;
+
+        if (didHit) {
+          zombies.sort((a, b) => a.dist - b.dist);
+          const kills = Math.min(item.maxKills, zombies.length);
+          zombies.splice(0, kills);
+          countEl.innerText = zombies.length;
+          playSound(sfxDunn);
+
+          if (item.name === 'HONDA') {
+            showToast(`🚗 HONDA MOWED DOWN ${kills} ZOMBIE(S)!`, '#00FF66', '#00FF66');
+          } else {
+            showToast(`⚔ KILLED ZOMBIE WITH ${item.name}!`, '#00FF66', '#00FF66');
+          }
+        } else {
+          showToast(`💥 OH NO THAT ${item.name} BROKE!`, '#FF0033', '#FF4444');
+        }
+
+        isUsingWeapon = false;
+
+        // If zombies and weapons still remain, schedule subsequent single-use
+        if (inventory.length > 0 && zombies.length > 0) {
+          scheduleItemUse();
+        }
+      }, 10000); // Wait 10 seconds before strike
     }
 
     // --- SPAWNER ---
@@ -465,9 +510,7 @@
       countEl.innerText = zombies.length;
       playSound(sfxDunn);
 
-      setTimeout(() => {
-        attemptUseItemOnZombie();
-      }, 1200);
+      scheduleItemUse();
 
       if (isSprinter && !isSprinterActive) {
         triggerSprinter();
@@ -625,6 +668,7 @@
       isHordeActive = false;
       isSprinterActive = false;
       isDustingZombies = false;
+      isUsingWeapon = false;
 
       inventory = [];
       renderInventory();
@@ -649,6 +693,7 @@
       isSprinterActive = false;
       isZombieState = false;
       isDustingZombies = false;
+      isUsingWeapon = false;
       hordeDeadline = null;
       sprinterDeadline = null;
       alertBox.style.display = "none";

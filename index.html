@@ -21,7 +21,7 @@
       user-select: none;
     }
 
-    /* Pinned Bottom-Right Corner */
+    /* Pinned Bottom-Right Corner - Radar */
     #hud-container {
       position: absolute;
       bottom: 20px;
@@ -90,12 +90,12 @@
       font-family: "Arial Black", Impact, sans-serif;
     }
 
-    /* Outbreak Alert Banner - Positioned to the LEFT of the Radar */
+    /* Outbreak Alert Banner - To the Left of Radar */
     #stream-alert-box {
       display: none;
       position: absolute;
       bottom: 24px;
-      right: 254px; /* 220px HUD width + 34px gap */
+      right: 254px;
       width: 270px;
       background: rgba(180, 0, 20, 0.98);
       border: 3.5px solid #FF0033;
@@ -143,6 +143,72 @@
       padding: 0;
     }
 
+    /* MINECRAFT-STYLE 5-SLOT INVENTORY (Bottom Center Aligned) */
+    #minecraft-inventory {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 6px;
+      background: rgba(15, 20, 15, 0.65);
+      border: 2px solid rgba(0, 255, 102, 0.5);
+      border-radius: 12px;
+      padding: 6px 8px;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.8), 0 0 8px rgba(0, 255, 102, 0.3);
+      z-index: 100;
+    }
+
+    .mc-slot {
+      width: 48px;
+      height: 48px;
+      background: rgba(0, 0, 0, 0.55);
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .mc-slot.filled {
+      border-color: #00FF66;
+      background: rgba(0, 20, 10, 0.8);
+      box-shadow: inset 0 0 8px rgba(0, 255, 102, 0.4);
+    }
+
+    .mc-slot img {
+      width: 40px;
+      height: 40px;
+      object-fit: contain;
+      filter: drop-shadow(0 0 4px rgba(0, 255, 102, 0.6));
+    }
+
+    /* Combat Result Popups */
+    #item-combat-log {
+      display: none;
+      position: absolute;
+      bottom: 84px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.9);
+      border: 2px solid #00FF66;
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-family: "Arial Black", Impact, sans-serif;
+      font-size: 15px;
+      letter-spacing: 1px;
+      white-space: nowrap;
+      z-index: 102;
+      animation: popIn 0.2s ease-out;
+    }
+
+    @keyframes popIn {
+      from { transform: translateX(-50%) translateY(8px) scale(0.9); opacity: 0; }
+      to { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
+    }
+
     @keyframes pulse {
       from { transform: scale(1); }
       to { transform: scale(1.03); }
@@ -151,13 +217,26 @@
 </head>
 <body>
 
-  <!-- Positioned to the left of the radar, safe from the screen top -->
+  <!-- Outbreak Alert Banner -->
   <div id="stream-alert-box">
     <div class="alert-main" id="alert-title">⚠ HORDE OUTBREAK ⚠</div>
     <div class="alert-timer" id="alert-timer">00:45</div>
     <div class="alert-sub" id="alert-desc">SPRINT > 15 MPH TO ESCAPE!</div>
   </div>
 
+  <!-- Combat Result Toast -->
+  <div id="item-combat-log"></div>
+
+  <!-- Bottom-Center Aligned 5-Slot Minecraft Inventory -->
+  <div id="minecraft-inventory">
+    <div class="mc-slot" id="slot-0"></div>
+    <div class="mc-slot" id="slot-1"></div>
+    <div class="mc-slot" id="slot-2"></div>
+    <div class="mc-slot" id="slot-3"></div>
+    <div class="mc-slot" id="slot-4"></div>
+  </div>
+
+  <!-- Radar HUD (Bottom Right) -->
   <div id="hud-container">
     <div class="hud-title">ZOMBIE ESCAPE</div>
     <canvas id="radar"></canvas>
@@ -190,6 +269,16 @@
     let isZombieState = false;
     let isDustingZombies = false;
 
+    // --- 5-SLOT INVENTORY SYSTEM ---
+    const WEAPON_POOL = [
+      { name: 'HONDA',   file: 'honda.jpg' },
+      { name: 'BAT',     file: 'bat.jpg' },
+      { name: 'KNIFE',   file: 'knife.jpg' },
+      { name: 'SWORD',   file: 'sword.jpg' },
+      { name: 'SHOTGUN', file: 'shotgun.jpg' }
+    ];
+    let inventory = []; // Max 5 items
+
     const canvas = document.getElementById('radar');
     const ctx = canvas.getContext('2d');
     const speedEl = document.getElementById('speed-val');
@@ -198,15 +287,16 @@
     const alertTitle = document.getElementById('alert-title');
     const alertTimer = document.getElementById('alert-timer');
     const alertDesc = document.getElementById('alert-desc');
+    const combatToast = document.getElementById('item-combat-log');
 
-    // High-DPI Canvas Scaling (180px landscape display)
+    // High-DPI Radar Canvas
     const dpr = window.devicePixelRatio || 2;
     const displaySize = 180;
     canvas.width = displaySize * dpr;
     canvas.height = displaySize * dpr;
     ctx.scale(dpr, dpr);
 
-    // Silent Preload Audio Pipeline
+    // Audio Pipeline
     function createTrack(filename, loop = false) {
       const a = new Audio(filename);
       a.preload = 'auto';
@@ -276,7 +366,70 @@
       );
     }
 
-    // Spawning Logic
+    // --- INVENTORY UI & LOGIC ---
+    function renderInventory() {
+      for (let i = 0; i < 5; i++) {
+        const slotEl = document.getElementById(`slot-${i}`);
+        if (inventory[i]) {
+          slotEl.className = 'mc-slot filled';
+          slotEl.innerHTML = `<img src="${inventory[i].file}" alt="${inventory[i].name}" />`;
+        } else {
+          slotEl.className = 'mc-slot';
+          slotEl.innerHTML = '';
+        }
+      }
+    }
+
+    function addRandomWeapon() {
+      if (inventory.length >= 5 || isZombieState) return;
+      const chosen = WEAPON_POOL[Math.floor(Math.random() * WEAPON_POOL.length)];
+      inventory.push(chosen);
+      renderInventory();
+    }
+
+    // 4-Minute Periodic Weapon Pickup (240,000ms)
+    setInterval(() => {
+      addRandomWeapon();
+    }, 4 * 60 * 1000);
+
+    // Initial starter weapon drop after 15 seconds to test
+    setTimeout(() => {
+      addRandomWeapon();
+    }, 15000);
+
+    function showCombatToast(msg, isSuccess) {
+      combatToast.innerText = msg;
+      combatToast.style.display = 'block';
+      combatToast.style.borderColor = isSuccess ? '#00FF66' : '#FF0033';
+      combatToast.style.color = isSuccess ? '#00FF66' : '#FF4444';
+      setTimeout(() => {
+        combatToast.style.display = 'none';
+      }, 2400);
+    }
+
+    // Item Usage: 20% Hit Chance vs Zombie
+    function attemptUseItemOnZombie() {
+      if (inventory.length === 0 || zombies.length === 0 || isZombieState) return;
+
+      const item = inventory.shift(); // Consume first available item
+      renderInventory();
+
+      const didHit = Math.random() < 0.20; // 20% success rate
+
+      if (didHit) {
+        // KILL CLOSEST ZOMBIE
+        zombies.sort((a, b) => a.dist - b.dist);
+        zombies.shift();
+        countEl.innerText = zombies.length;
+        playSound(sfxDunn);
+        showCombatToast(`⚔ KILLED ZOMBIE WITH ${item.name}!`, true);
+      } else {
+        // ITEM BROKE
+        showCombatToast(`💥 OH NO THAT ${item.name} BROKE!`, false);
+      }
+    }
+
+    // --- SPAWNER ---
     function spawnZombie(forceSprinter = false) {
       if (isZombieState) return;
 
@@ -302,6 +455,11 @@
 
       countEl.innerText = zombies.length;
       playSound(sfxDunn);
+
+      // Attempt to engage using any ready inventory item
+      setTimeout(() => {
+        attemptUseItemOnZombie();
+      }, 1200);
 
       if (isSprinter && !isSprinterActive) {
         triggerSprinter();
@@ -340,7 +498,7 @@
       alertDesc.style.color = "#00E5FF";
     }
 
-    // Engine Loop
+    // --- GAME ENGINE LOOP ---
     let lastTime = performance.now();
     let scanAngle = 0;
 
@@ -460,6 +618,10 @@
       isSprinterActive = false;
       isDustingZombies = false;
 
+      // Reset Inventory on Infection
+      inventory = [];
+      renderInventory();
+
       musicChase.pause();
       musicChase.currentTime = 0;
       playSound(voiceEvil);
@@ -485,6 +647,10 @@
       alertBox.style.display = "none";
       musicChase.pause();
       musicChase.currentTime = 0;
+
+      // Ensure fresh inventory state
+      inventory = [];
+      renderInventory();
     }
 
     // High-Resolution Radar Render
@@ -554,6 +720,7 @@
       });
     }
 
+    renderInventory();
     requestAnimationFrame(gameLoop);
   </script>
 </body>

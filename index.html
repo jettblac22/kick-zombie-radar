@@ -75,7 +75,7 @@
       width: 100vw;
       height: 100vh;
       object-fit: contain;
-      filter: drop-shadow(0 0 40px rgba(255, 0, 0, 0.8));
+      filter: drop-shadow(0 0 40px rgba(255, 0, 0, 0.9));
     }
 
     /* Radar HUD - Bottom Right */
@@ -285,10 +285,10 @@
 </head>
 <body>
 
-  <!-- Fullscreen Video Cinematic Container -->
+  <!-- Fullscreen Video Layer (Muted to guarantee WebKit autoplay) -->
   <div id="video-layer">
     <video id="zombie-run-vid" src="zombie_run.webm" muted playsinline></video>
-    <video id="zombie-bite-vid" src="zombie_bite.webm" playsinline></video>
+    <video id="zombie-bite-vid" src="zombie_bite.webm" muted playsinline></video>
   </div>
 
   <!-- Outbreak Alert Banner -->
@@ -387,6 +387,8 @@
     const sfxDunn = createTrack('dunn.m4a');
     const musicChase = createTrack('chase.m4a', true);
     const voiceEvil = createTrack('evil_voice.m4a');
+    const sfxGrowl = createTrack('zombie_growl.m4a');
+    const sfxBite = createTrack('zombie_bite.m4a');
 
     function playSound(track) {
       if (!track) return;
@@ -394,7 +396,7 @@
       track.play().catch(() => {});
     }
 
-    // Web Audio Chime & Weapon Break Sound
+    // Web Audio Chime & Weapon Break
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
     function playDing() {
@@ -452,13 +454,14 @@
       }
     }
 
-    // --- VIDEO PLAYBACK FUNCTIONS ---
+    // --- VIDEO TRIGGER HANDLERS ---
     function triggerZombieApproachVideo() {
       if (isRunPlaying || isZombieState) return;
       isRunPlaying = true;
       runVideo.currentTime = 0;
       runVideo.className = 'zombie-charge-anim';
       runVideo.play().catch(() => {});
+      playSound(sfxGrowl);
 
       runVideo.onended = () => {
         runVideo.className = '';
@@ -466,7 +469,6 @@
         isRunPlaying = false;
       };
 
-      // Fallback timeout in case WebM ends abruptly
       setTimeout(() => {
         runVideo.className = '';
         runVideo.style.display = 'none';
@@ -638,7 +640,9 @@
     function spawnZombie(forceSprinter = false) {
       if (isZombieState) return;
 
-      const isSprinter = forceSprinter || (Math.random() < 0.03);
+      // RULE: Do not spawn sprinters while a horde outbreak is currently active
+      const canSprinter = !isHordeActive && !isSprinterActive;
+      const isSprinter = canSprinter && (forceSprinter || (Math.random() < 0.03));
       const isAmbush = isSprinter ? false : (Math.random() < 0.20);
       
       const baseRelAngle = isAmbush 
@@ -840,28 +844,29 @@
       musicChase.pause();
       musicChase.currentTime = 0;
 
-      // Kill any active running approach video
+      // Stop runner video
       runVideo.className = '';
       runVideo.style.display = 'none';
       isRunPlaying = false;
 
-      // Play Bitten Jumpscare WebM
+      // Pop up the Jumpscare Video & Play Bite Sound
       biteVideo.style.display = 'block';
       biteVideo.currentTime = 0;
-      biteVideo.play().catch(() => {});
+      biteVideo.play().catch(e => console.warn('Bite video error:', e));
+      playSound(sfxBite);
 
+      // Play evil voice right as the bite video wraps up
       biteVideo.onended = () => {
         biteVideo.style.display = 'none';
-        playSound(voiceEvil); // Plays evil voice right after bite animation completes
+        playSound(voiceEvil);
       };
 
-      // Fallback in case WebM doesn't signal ended
       setTimeout(() => {
         if (biteVideo.style.display === 'block') {
           biteVideo.style.display = 'none';
           playSound(voiceEvil);
         }
-      }, 3500);
+      }, 2800);
 
       alertBox.style.display = "block";
       alertBox.style.background = "rgba(70, 0, 0, 0.98)";

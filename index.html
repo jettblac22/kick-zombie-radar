@@ -21,6 +21,63 @@
       user-select: none;
     }
 
+    /* FULLSCREEN CINEMATIC OVERLAYS */
+    #video-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      pointer-events: none;
+      z-index: 90;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    /* Zombie Running Approach Video */
+    #zombie-run-vid {
+      display: none;
+      max-height: 85vh;
+      object-fit: contain;
+      filter: drop-shadow(0 0 20px rgba(0, 0, 0, 0.9));
+      transform-origin: center center;
+    }
+
+    .zombie-charge-anim {
+      display: block !important;
+      animation: chargeForward 2.8s ease-in forwards;
+    }
+
+    @keyframes chargeForward {
+      0% {
+        transform: scale(0.32);
+        opacity: 0.2;
+        filter: blur(2px);
+      }
+      35% {
+        opacity: 0.95;
+        filter: blur(0px);
+      }
+      90% {
+        transform: scale(1.15);
+        opacity: 1;
+      }
+      100% {
+        transform: scale(1.35);
+        opacity: 0;
+      }
+    }
+
+    /* Zombie Bite Jumpscare Video */
+    #zombie-bite-vid {
+      display: none;
+      width: 100vw;
+      height: 100vh;
+      object-fit: contain;
+      filter: drop-shadow(0 0 40px rgba(255, 0, 0, 0.8));
+    }
+
     /* Radar HUD - Bottom Right */
     #hud-container {
       position: absolute;
@@ -90,7 +147,7 @@
       font-family: "Arial Black", Impact, sans-serif;
     }
 
-    /* Alert Banner - Left of Radar */
+    /* Outbreak Alert Banner - Left of Radar */
     #stream-alert-box {
       display: none;
       position: absolute;
@@ -196,7 +253,7 @@
       text-shadow: 0 0 4px #000;
     }
 
-    /* Notification & Combat Toast */
+    /* Combat Notification Banner */
     #item-combat-log {
       display: none;
       position: absolute;
@@ -227,6 +284,12 @@
   </style>
 </head>
 <body>
+
+  <!-- Fullscreen Video Cinematic Container -->
+  <div id="video-layer">
+    <video id="zombie-run-vid" src="zombie_run.webm" muted playsinline></video>
+    <video id="zombie-bite-vid" src="zombie_bite.webm" playsinline></video>
+  </div>
 
   <!-- Outbreak Alert Banner -->
   <div id="stream-alert-box">
@@ -301,6 +364,11 @@
     const alertDesc = document.getElementById('alert-desc');
     const combatToast = document.getElementById('item-combat-log');
 
+    // Video Elements
+    const runVideo = document.getElementById('zombie-run-vid');
+    const biteVideo = document.getElementById('zombie-bite-vid');
+    let isRunPlaying = false;
+
     // High-DPI Radar Canvas
     const dpr = window.devicePixelRatio || 2;
     const displaySize = 180;
@@ -326,7 +394,7 @@
       track.play().catch(() => {});
     }
 
-    // Web Audio API Synthesizer (Chime & Break Stinger)
+    // Web Audio Chime & Weapon Break Sound
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
     function playDing() {
@@ -335,8 +403,8 @@
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(1174.66, audioCtx.currentTime); // D6
-        osc.frequency.exponentialRampToValueAtTime(1760.00, audioCtx.currentTime + 0.08); // A6
+        osc.frequency.setValueAtTime(1174.66, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(1760.00, audioCtx.currentTime + 0.08);
         gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
         osc.connect(gain);
@@ -352,8 +420,7 @@
       try {
         if (audioCtx.state === 'suspended') audioCtx.resume();
         const t = audioCtx.currentTime;
-        
-        // Metallic snap (Square wave dropping fast)
+
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = 'sawtooth';
@@ -366,7 +433,6 @@
         osc.start(t);
         osc.stop(t + 0.18);
 
-        // Crunchy impact burst (Buffer noise)
         const bufferSize = audioCtx.sampleRate * 0.12;
         const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
         const data = buffer.getChannelData(0);
@@ -384,6 +450,28 @@
       } catch (e) {
         console.warn('Break sound failed:', e);
       }
+    }
+
+    // --- VIDEO PLAYBACK FUNCTIONS ---
+    function triggerZombieApproachVideo() {
+      if (isRunPlaying || isZombieState) return;
+      isRunPlaying = true;
+      runVideo.currentTime = 0;
+      runVideo.className = 'zombie-charge-anim';
+      runVideo.play().catch(() => {});
+
+      runVideo.onended = () => {
+        runVideo.className = '';
+        runVideo.style.display = 'none';
+        isRunPlaying = false;
+      };
+
+      // Fallback timeout in case WebM ends abruptly
+      setTimeout(() => {
+        runVideo.className = '';
+        runVideo.style.display = 'none';
+        isRunPlaying = false;
+      }, 2900);
     }
 
     // --- DUAL-ENGINE GPS (UNCAPPED SPEED + DELTA FALLBACK) ---
@@ -505,7 +593,7 @@
 
     setTimeout(() => { addRandomWeapon(); }, 10000);
 
-    // Item Usage: 10-Second Delay, 20% Hit Chance, Honda Multi-kill
+    // Item Usage: 10-Second Wait, 20% Hit Rate, Honda 5-kill
     function scheduleItemUse() {
       if (isUsingWeapon || inventory.length === 0 || zombies.length === 0 || isZombieState) return;
 
@@ -546,24 +634,22 @@
       }, 10000);
     }
 
-    // --- ZOMBIE SPAWNER & POSITIONING LOGIC ---
+    // --- ZOMBIE SPAWNER ---
     function spawnZombie(forceSprinter = false) {
       if (isZombieState) return;
 
       const isSprinter = forceSprinter || (Math.random() < 0.03);
       const isAmbush = isSprinter ? false : (Math.random() < 0.20);
       
-      // Frontal ambush or rear pursuer
       const baseRelAngle = isAmbush 
-        ? (Math.random() - 0.5) * 0.8  // Narrow frontal cone
-        : Math.PI + (Math.random() - 0.5) * 1.4; // Rear arc
+        ? (Math.random() - 0.5) * 0.8
+        : Math.PI + (Math.random() - 0.5) * 1.4;
 
-      // Substantially further hold distance (26 to 42m)
       const personalHoldDist = isSprinter ? (20 + Math.random() * 8) : (26 + Math.random() * 16);
 
       zombies.push({
         id: Date.now() + Math.random(),
-        dist: 92 + Math.random() * 6, // Spawn near boundary
+        dist: 92 + Math.random() * 6,
         targetHoldDist: personalHoldDist,
         relAngle: baseRelAngle,
         mode: isAmbush ? 'ambush' : 'chase',
@@ -574,6 +660,9 @@
 
       countEl.innerText = zombies.length;
       playSound(sfxDunn);
+
+      // Trigger On-Screen WebM Zombie Approach Animation
+      triggerZombieApproachVideo();
 
       scheduleItemUse();
 
@@ -590,7 +679,7 @@
       }
     }
 
-    // Zombie Spawn Interval: 25 - 70s
+    // Zombie Spawner: 25 - 70s
     function scheduleSpawn() {
       const nextSpawnSec = 25 + Math.random() * 45;
       setTimeout(() => {
@@ -635,20 +724,15 @@
           return;
         }
 
-        // FRONTAL AMBUSH PASS-THROUGH LOGIC
         if (z.mode === 'ambush') {
-          z.dist -= (22 * dt); // Charges directly toward player
-
-          // If close enough without a collision, swing behind into a chase
+          z.dist -= (22 * dt);
           if (z.dist <= 16) {
             z.mode = 'chase';
-            // Smoothly redirect relative angle to directly behind the player
             z.relAngle = Math.PI + (Math.random() - 0.5) * 0.8;
           }
           return;
         }
 
-        // REGULAR REAR PURSUIT LOGIC (Calmer, slower close rate)
         if (isSprinterActive) {
           const progress = Math.max(0, (sprinterDeadline - Date.now()) / (20 * 1000));
           const targetDist = z.type === 'sprinter' ? (progress * 18) : (progress * z.targetHoldDist);
@@ -658,7 +742,6 @@
           const targetDist = progress * z.targetHoldDist;
           z.dist += (targetDist - z.dist) * 0.05;
         } else {
-          // Slow approach down from 28m/s to 10m/s
           if (z.dist > z.targetHoldDist + 1) {
             z.dist -= (10 * dt);
           } else {
@@ -756,7 +839,29 @@
 
       musicChase.pause();
       musicChase.currentTime = 0;
-      playSound(voiceEvil);
+
+      // Kill any active running approach video
+      runVideo.className = '';
+      runVideo.style.display = 'none';
+      isRunPlaying = false;
+
+      // Play Bitten Jumpscare WebM
+      biteVideo.style.display = 'block';
+      biteVideo.currentTime = 0;
+      biteVideo.play().catch(() => {});
+
+      biteVideo.onended = () => {
+        biteVideo.style.display = 'none';
+        playSound(voiceEvil); // Plays evil voice right after bite animation completes
+      };
+
+      // Fallback in case WebM doesn't signal ended
+      setTimeout(() => {
+        if (biteVideo.style.display === 'block') {
+          biteVideo.style.display = 'none';
+          playSound(voiceEvil);
+        }
+      }, 3500);
 
       alertBox.style.display = "block";
       alertBox.style.background = "rgba(70, 0, 0, 0.98)";
@@ -781,11 +886,16 @@
       musicChase.pause();
       musicChase.currentTime = 0;
 
+      biteVideo.style.display = 'none';
+      runVideo.className = '';
+      runVideo.style.display = 'none';
+      isRunPlaying = false;
+
       inventory = [];
       renderInventory();
     }
 
-    // Radar Canvas Render
+    // High-DPI Radar Render
     function renderRadar(timeSec) {
       ctx.clearRect(0, 0, displaySize, displaySize);
       const cx = displaySize / 2;

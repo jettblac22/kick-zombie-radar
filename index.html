@@ -21,7 +21,7 @@
       user-select: none;
     }
 
-    /* FULLSCREEN CINEMATIC OVERLAYS */
+    /* FULLSCREEN CINEMATIC CANVAS LAYER */
     #video-layer {
       position: absolute;
       top: 0;
@@ -35,11 +35,20 @@
       align-items: center;
     }
 
-    /* Zombie Running Approach Video */
-    #zombie-run-vid {
+    /* Invisible raw video holders */
+    .hidden-source-vid {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0.001;
+      pointer-events: none;
+    }
+
+    /* Visible Chroma-Keyed Canvases */
+    #zombie-run-canvas {
       display: none;
       max-height: 85vh;
-      object-fit: contain;
+      max-width: 90vw;
       transform-origin: center center;
     }
 
@@ -66,8 +75,7 @@
       }
     }
 
-    /* Zombie Bite Jumpscare Video */
-    #zombie-bite-vid {
+    #zombie-bite-canvas {
       display: none;
       width: 100vw;
       height: 100vh;
@@ -143,7 +151,7 @@
       font-family: "Arial Black", Impact, sans-serif;
     }
 
-    /* Outbreak Alert Banner - Left of Radar */
+    /* Outbreak Alert Banner */
     #stream-alert-box {
       display: none;
       position: absolute;
@@ -196,7 +204,7 @@
       padding: 0;
     }
 
-    /* 5-Slot Inventory - Bottom Left */
+    /* 5-Slot Inventory */
     #minecraft-inventory {
       position: absolute;
       bottom: 20px;
@@ -269,7 +277,7 @@
     }
 
     @keyframes popIn {
-      from { transform: translateY(8px) scale(0.92); opacity: 0; }
+      from { transform: translateY(8px) scale(0.92); opacity: 1; }
       to { transform: translateY(0) scale(1); opacity: 1; }
     }
 
@@ -281,16 +289,15 @@
 </head>
 <body>
 
-  <!-- Fullscreen Video Layer (Prefers Apple HEVC .mov for iOS transparency) -->
+  <!-- Fullscreen Video/Canvas Layer -->
   <div id="video-layer">
-    <video id="zombie-run-vid" muted playsinline>
-      <source src="zombie_run.mov" type='video/mp4; codecs="hvc1"'>
-      <source src="zombie_run.webm" type="video/webm">
-    </video>
-    <video id="zombie-bite-vid" muted playsinline>
-      <source src="zombie_bite.mov" type='video/mp4; codecs="hvc1"'>
-      <source src="zombie_bite.webm" type="video/webm">
-    </video>
+    <!-- Raw invisible video sources (keeps your current webm files) -->
+    <video id="zombie-run-vid" class="hidden-source-vid" muted playsinline preload="auto" src="zombie_run.webm"></video>
+    <video id="zombie-bite-vid" class="hidden-source-vid" muted playsinline preload="auto" src="zombie_bite.webm"></video>
+
+    <!-- Visible Keyed Canvases that strip out black background -->
+    <canvas id="zombie-run-canvas"></canvas>
+    <canvas id="zombie-bite-canvas"></canvas>
   </div>
 
   <!-- Outbreak Alert Banner -->
@@ -335,7 +342,7 @@
     const SPRINTER_ESCAPE_MPH = 17.0;
     const RESTART_TRIGGER_MPH = 14.0;
     const RADAR_MAX_METERS = 100.0;
-    const ESCAPE_SUSTAIN_MS = 1800; // Requires 1.8s sustained sprint to clear false GPS jitter
+    const ESCAPE_SUSTAIN_MS = 1800; // 1.8s sustained sprint filter
 
     let player = { lat: 42.3314, lon: -83.0458, speedMph: 0, headingRad: 0, targetHeading: 0 };
     let zombies = [];
@@ -359,8 +366,8 @@
     let inventory = [];
     let isUsingWeapon = false;
 
-    const canvas = document.getElementById('radar');
-    const ctx = canvas.getContext('2d');
+    const radarCanvas = document.getElementById('radar');
+    const ctx = radarCanvas.getContext('2d');
     const speedEl = document.getElementById('speed-val');
     const countEl = document.getElementById('zombie-count');
     const alertBox = document.getElementById('stream-alert-box');
@@ -369,16 +376,22 @@
     const alertDesc = document.getElementById('alert-desc');
     const combatToast = document.getElementById('item-combat-log');
 
-    // Video Elements
+    // Video & Chroma-Key Canvas Elements
     const runVideo = document.getElementById('zombie-run-vid');
     const biteVideo = document.getElementById('zombie-bite-vid');
+    const runCanvas = document.getElementById('zombie-run-canvas');
+    const biteCanvas = document.getElementById('zombie-bite-canvas');
+    const runCtx = runCanvas.getContext('2d', { willReadFrequently: true });
+    const biteCtx = biteCanvas.getContext('2d', { willReadFrequently: true });
+
     let isRunPlaying = false;
+    let isBitePlaying = false;
 
     // High-DPI Radar Canvas
     const dpr = window.devicePixelRatio || 2;
     const displaySize = 180;
-    canvas.width = displaySize * dpr;
-    canvas.height = displaySize * dpr;
+    radarCanvas.width = displaySize * dpr;
+    radarCanvas.height = displaySize * dpr;
     ctx.scale(dpr, dpr);
 
     // --- AUDIO PIPELINE ---
@@ -459,26 +472,90 @@
       }
     }
 
-    // --- VIDEO TRIGGER HANDLERS ---
+    // --- REAL-TIME CHROMA-KEY VIDEO PROCESSOR ---
+    function renderKeyedVideoFrame(video, targetCanvas, targetCtx) {
+      if (video.paused || video.ended || video.videoWidth === 0) return;
+
+      if (targetCanvas.width !== video.videoWidth) {
+        targetCanvas.width = video.videoWidth;
+        targetCanvas.height = video.videoHeight;
+      }
+
+      targetCtx.drawImage(video, 0, 0, targetCanvas.width, targetCanvas.height);
+      const frame = targetCtx.getImageData(0, 0, targetCanvas.width, targetCanvas.height);
+      const len = frame.data.length;
+
+      // Key out dark/black pixels: if R, G, B are all low, make transparent
+      for (let i = 0; i < len; i += 4) {
+        const r = frame.data[i];
+        const g = frame.data[i + 1];
+        const b = frame.data[i + 2];
+        if (r < 35 && g < 35 && b < 35) {
+          frame.data[i + 3] = 0; // Alpha = 0 (100% transparent)
+        }
+      }
+      targetCtx.putImageData(frame, 0, 0);
+    }
+
     function triggerZombieApproachVideo() {
       if (isRunPlaying || isZombieState) return;
       isRunPlaying = true;
+
       runVideo.currentTime = 0;
-      runVideo.className = 'zombie-charge-anim';
       runVideo.play().catch(() => {});
       playSound(sfxGrowl);
 
+      runCanvas.className = 'zombie-charge-anim';
+
+      function streamRunFrames() {
+        if (!isRunPlaying) return;
+        renderKeyedVideoFrame(runVideo, runCanvas, runCtx);
+        requestAnimationFrame(streamRunFrames);
+      }
+      requestAnimationFrame(streamRunFrames);
+
       runVideo.onended = () => {
-        runVideo.className = '';
-        runVideo.style.display = 'none';
+        runCanvas.className = '';
+        runCanvas.style.display = 'none';
         isRunPlaying = false;
       };
 
       setTimeout(() => {
-        runVideo.className = '';
-        runVideo.style.display = 'none';
+        runCanvas.className = '';
+        runCanvas.style.display = 'none';
         isRunPlaying = false;
       }, 2900);
+    }
+
+    function triggerBiteVideo() {
+      if (isBitePlaying) return;
+      isBitePlaying = true;
+
+      biteCanvas.style.display = 'block';
+      biteVideo.currentTime = 0;
+      biteVideo.play().catch(e => console.warn('Bite video error:', e));
+      playSound(sfxBite);
+
+      function streamBiteFrames() {
+        if (!isBitePlaying) return;
+        renderKeyedVideoFrame(biteVideo, biteCanvas, biteCtx);
+        requestAnimationFrame(streamBiteFrames);
+      }
+      requestAnimationFrame(streamBiteFrames);
+
+      biteVideo.onended = () => {
+        biteCanvas.style.display = 'none';
+        isBitePlaying = false;
+        playSound(voiceEvil);
+      };
+
+      setTimeout(() => {
+        if (isBitePlaying) {
+          biteCanvas.style.display = 'none';
+          isBitePlaying = false;
+          playSound(voiceEvil);
+        }
+      }, 2800);
     }
 
     // --- JITTER-RESISTANT DUAL-ENGINE GPS ---
@@ -499,7 +576,7 @@
     if ('geolocation' in navigator) {
       navigator.geolocation.watchPosition(
         (pos) => {
-          // Drop noisy fixes immediately (accuracy worse than 14m)
+          // Reject fixes with poor horizontal accuracy (> 14 meters)
           if (pos.coords.accuracy && pos.coords.accuracy > 14) {
             return;
           }
@@ -533,13 +610,12 @@
             player.targetHeading = pos.coords.heading * Math.PI / 180;
           }
 
-          // Filter out physical outliers
           let candidateMph = reportedMph;
           if (calculatedMph > reportedMph && calculatedMph < 30.0) {
             candidateMph = calculatedMph;
           }
 
-          // Acceleration clamp: Skates realistically won't accelerate > 6.5 MPH in a single second
+          // Acceleration clamp: physical velocity won't jump > 6.5 MPH in 1s
           if (timeDeltaSec > 0 && player.speedMph > 0) {
             const maxPhysJump = Math.max(3.0, timeDeltaSec * 6.5);
             if (candidateMph > player.speedMph + maxPhysJump) {
@@ -590,7 +666,7 @@
 
     function addRandomWeapon() {
       if (isZombieState) return;
-      if (!hasFirstZombieSpawned) return; // Block drops until first zombie appears on board
+      if (!hasFirstZombieSpawned) return; // Block weapon spawns until the game officially starts
 
       if (inventory.length >= 5) {
         showToast('⚠ INVENTORY FULL!', '#FFE600', '#FFE600');
@@ -604,7 +680,6 @@
       showToast(`📦 YOU FOUND A ${chosen.name}!`, '#00E5FF', '#00E5FF');
     }
 
-    // Weapon Drop Loop: 60 - 120s
     function scheduleWeaponDrop() {
       const nextDelaySec = 60 + Math.random() * 60;
       setTimeout(() => {
@@ -614,10 +689,8 @@
     }
     scheduleWeaponDrop();
 
-    // Starter Drop Check at 10s
     setTimeout(() => { addRandomWeapon(); }, 10000);
 
-    // Item Usage: 10-Second Wait, 20% Hit Rate, Honda 5-kill
     function scheduleItemUse() {
       if (isUsingWeapon || inventory.length === 0 || zombies.length === 0 || isZombieState) return;
 
@@ -662,7 +735,7 @@
     function spawnZombie(forceSprinter = false) {
       if (isZombieState) return;
 
-      hasFirstZombieSpawned = true; // Unlocks weapon drops from now on
+      hasFirstZombieSpawned = true; // Permanently unlocks drops for the session
 
       const canSprinter = !isHordeActive && !isSprinterActive;
       const isSprinter = canSprinter && (forceSprinter || (Math.random() < 0.03));
@@ -704,7 +777,6 @@
       }
     }
 
-    // Zombie Spawner Loop: 25 - 70s
     function scheduleSpawn() {
       const nextSpawnSec = 25 + Math.random() * 45;
       setTimeout(() => {
@@ -789,7 +861,6 @@
         return;
       }
 
-      // Sprinter Check with Sustained Sprint Filter
       if (isSprinterActive) {
         const remainingMs = sprinterDeadline - Date.now();
         const remSec = Math.max(0, Math.ceil(remainingMs / 1000));
@@ -812,7 +883,6 @@
         return;
       }
 
-      // Horde Trigger
       if (zombies.length >= HORDE_TRIGGER_COUNT && !isHordeActive && !isDustingZombies) {
         isHordeActive = true;
         hordeDeadline = Date.now() + (HORDE_TIME_LIMIT_SEC * 1000);
@@ -830,7 +900,6 @@
         musicChase.play().catch(() => {});
       }
 
-      // Horde Escape Check with Sustained Sprint Filter
       if (isHordeActive) {
         const remainingMs = hordeDeadline - Date.now();
         const totalSec = Math.max(0, Math.ceil(remainingMs / 1000));
@@ -883,28 +952,11 @@
       musicChase.pause();
       musicChase.currentTime = 0;
 
-      // Stop running video
-      runVideo.className = '';
-      runVideo.style.display = 'none';
+      runCanvas.className = '';
+      runCanvas.style.display = 'none';
       isRunPlaying = false;
 
-      // Pop Bite Video
-      biteVideo.style.display = 'block';
-      biteVideo.currentTime = 0;
-      biteVideo.play().catch(e => console.warn('Bite video error:', e));
-      playSound(sfxBite);
-
-      biteVideo.onended = () => {
-        biteVideo.style.display = 'none';
-        playSound(voiceEvil);
-      };
-
-      setTimeout(() => {
-        if (biteVideo.style.display === 'block') {
-          biteVideo.style.display = 'none';
-          playSound(voiceEvil);
-        }
-      }, 2800);
+      triggerBiteVideo();
 
       alertBox.style.display = "block";
       alertBox.style.background = "rgba(70, 0, 0, 0.98)";
@@ -923,7 +975,7 @@
       isZombieState = false;
       isDustingZombies = false;
       isUsingWeapon = false;
-      hasFirstZombieSpawned = false; // Reset start condition gate
+      hasFirstZombieSpawned = false;
       hordeDeadline = null;
       sprinterDeadline = null;
       escapeStreakStartTime = null;
@@ -931,9 +983,10 @@
       musicChase.pause();
       musicChase.currentTime = 0;
 
-      biteVideo.style.display = 'none';
-      runVideo.className = '';
-      runVideo.style.display = 'none';
+      biteCanvas.style.display = 'none';
+      isBitePlaying = false;
+      runCanvas.className = '';
+      runCanvas.style.display = 'none';
       isRunPlaying = false;
 
       inventory = [];

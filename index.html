@@ -33,6 +33,7 @@
       display: flex;
       justify-content: center;
       align-items: center;
+      isolation: isolate; /* Clean blend containment */
     }
 
     /* Zombie Running Approach Video */
@@ -40,8 +41,9 @@
       display: none;
       max-height: 85vh;
       object-fit: contain;
-      filter: drop-shadow(0 0 20px rgba(0, 0, 0, 0.9));
       transform-origin: center center;
+      mix-blend-mode: screen; /* Eliminates the solid black rectangle */
+      filter: contrast(1.15) brightness(1.05);
     }
 
     .zombie-charge-anim {
@@ -53,11 +55,9 @@
       0% {
         transform: scale(0.32);
         opacity: 0.2;
-        filter: blur(2px);
       }
       35% {
         opacity: 0.95;
-        filter: blur(0px);
       }
       90% {
         transform: scale(1.15);
@@ -75,7 +75,8 @@
       width: 100vw;
       height: 100vh;
       object-fit: contain;
-      filter: drop-shadow(0 0 40px rgba(255, 0, 0, 0.9));
+      mix-blend-mode: screen; /* Eliminates the solid black rectangle */
+      filter: contrast(1.2) brightness(1.1);
     }
 
     /* Radar HUD - Bottom Right */
@@ -285,7 +286,7 @@
 </head>
 <body>
 
-  <!-- Fullscreen Video Layer (Muted to guarantee WebKit autoplay) -->
+  <!-- Fullscreen Video Layer with Screen Blending -->
   <div id="video-layer">
     <video id="zombie-run-vid" src="zombie_run.webm" muted playsinline></video>
     <video id="zombie-bite-vid" src="zombie_bite.webm" muted playsinline></video>
@@ -333,6 +334,7 @@
     const SPRINTER_ESCAPE_MPH = 17.0;
     const RESTART_TRIGGER_MPH = 14.0;
     const RADAR_MAX_METERS = 100.0;
+    const ESCAPE_SUSTAIN_MS = 1800; // Requires 1.8s of sustained speed to confirm escape
 
     let player = { lat: 42.3314, lon: -83.0458, speedMph: 0, headingRad: 0, targetHeading: 0 };
     let zombies = [];
@@ -342,6 +344,7 @@
     let sprinterDeadline = null;
     let isZombieState = false;
     let isDustingZombies = false;
+    let escapeStreakStartTime = null;
 
     // --- 5-SLOT INVENTORY SYSTEM ---
     const WEAPON_POOL = [
@@ -476,7 +479,7 @@
       }, 2900);
     }
 
-    // --- DUAL-ENGINE GPS (UNCAPPED SPEED + DELTA FALLBACK) ---
+    // --- JITTER-RESISTANT DUAL-ENGINE GPS ---
     let lastGpsLat = null;
     let lastGpsLon = null;
     let lastGpsTime = null;
@@ -494,6 +497,11 @@
     if ('geolocation' in navigator) {
       navigator.geolocation.watchPosition(
         (pos) => {
+          // 1. Accuracy Filter: Reject inaccurate fixes
+          if (pos.coords.accuracy && pos.coords.accuracy > 14) {
+            return;
+          }
+
           const newLat = pos.coords.latitude;
           const newLon = pos.coords.longitude;
           const nowMs = pos.timestamp || Date.now();
@@ -504,9 +512,10 @@
           }
 
           let calculatedMph = 0;
+          let timeDeltaSec = 0;
           if (lastGpsLat !== null && lastGpsLon !== null && lastGpsTime !== null) {
-            const timeDeltaSec = (nowMs - lastGpsTime) / 1000;
-            if (timeDeltaSec > 0.2 && timeDeltaSec < 4.0) {
+            timeDeltaSec = (nowMs - lastGpsTime) / 1000;
+            if (timeDeltaSec > 0.25 && timeDeltaSec < 4.0) {
               const distMeters = getDistanceMeters(lastGpsLat, lastGpsLon, newLat, newLon);
               calculatedMph = (distMeters / timeDeltaSec) * 2.23694;
             }
@@ -522,9 +531,18 @@
             player.targetHeading = pos.coords.heading * Math.PI / 180;
           }
 
-          let finalMph = reportedMph;
-          if (calculatedMph > reportedMph && calculatedMph < 45.0) {
-            finalMph = calculatedMph;
+          // Use the higher reading, but ignore physical impossibilities (>30 MPH)
+          let candidateMph = reportedMph;
+          if (calculatedMph > reportedMph && calculatedMph < 30.0) {
+            candidateMph = calculatedMph;
+          }
+
+          // 2. Acceleration Clamping: Prevent sudden telemetry teleports
+          if (timeDeltaSec > 0 && player.speedMph > 0) {
+            const maxPhysJump = Math.max(3.0, timeDeltaSec * 6.5); // Max 6.5 MPH gain per second
+            if (candidateMph > player.speedMph + maxPhysJump) {
+              candidateMph = player.speedMph + maxPhysJump;
+            }
           }
 
           lastGpsLat = newLat;
@@ -533,7 +551,7 @@
           player.lat = newLat;
           player.lon = newLon;
 
-          player.speedMph = parseFloat(finalMph.toFixed(1));
+          player.speedMph = parseFloat(candidateMph.toFixed(1));
           speedEl.innerText = player.speedMph;
         },
         (err) => console.warn('GPS Error: ', err),
@@ -640,7 +658,7 @@
     function spawnZombie(forceSprinter = false) {
       if (isZombieState) return;
 
-      // RULE: Do not spawn sprinters while a horde outbreak is currently active
+      // Lock out sprinters if a horde is already active
       const canSprinter = !isHordeActive && !isSprinterActive;
       const isSprinter = canSprinter && (forceSprinter || (Math.random() < 0.03));
       const isAmbush = isSprinter ? false : (Math.random() < 0.20);
@@ -665,7 +683,7 @@
       countEl.innerText = zombies.length;
       playSound(sfxDunn);
 
-      // Trigger On-Screen WebM Zombie Approach Animation
+      // Trigger WebM runner with screen blend
       triggerZombieApproachVideo();
 
       scheduleItemUse();
@@ -696,6 +714,7 @@
     function triggerSprinter() {
       isSprinterActive = true;
       sprinterDeadline = Date.now() + (20 * 1000);
+      escapeStreakStartTime = null;
 
       musicChase.currentTime = 0;
       musicChase.play().catch(() => {});
@@ -767,14 +786,21 @@
         return;
       }
 
+      // 3. Sustained Escape Window Logic
       if (isSprinterActive) {
         const remainingMs = sprinterDeadline - Date.now();
         const remSec = Math.max(0, Math.ceil(remainingMs / 1000));
         alertTimer.innerText = "00:" + (remSec < 10 ? "0" : "") + remSec;
 
         if (player.speedMph >= SPRINTER_ESCAPE_MPH && !isDustingZombies) {
-          triggerEscapeSequence("⚡ SPRINTER EVADED ⚡", "BOARD CLEARED!");
+          if (!escapeStreakStartTime) escapeStreakStartTime = Date.now();
+          if (Date.now() - escapeStreakStartTime >= ESCAPE_SUSTAIN_MS) {
+            escapeStreakStartTime = null;
+            triggerEscapeSequence("⚡ SPRINTER EVADED ⚡", "BOARD CLEARED!");
+          }
           return;
+        } else {
+          escapeStreakStartTime = null;
         }
 
         if (remSec <= 0 && !isDustingZombies) {
@@ -786,6 +812,7 @@
       if (zombies.length >= HORDE_TRIGGER_COUNT && !isHordeActive && !isDustingZombies) {
         isHordeActive = true;
         hordeDeadline = Date.now() + (HORDE_TIME_LIMIT_SEC * 1000);
+        escapeStreakStartTime = null;
 
         alertBox.style.display = "block";
         alertBox.style.background = "rgba(180, 0, 20, 0.98)";
@@ -807,8 +834,14 @@
         alertTimer.innerText = (mins < 10 ? "0" : "") + mins + ":" + (secs < 10 ? "0" : "") + secs;
 
         if (player.speedMph >= HORDE_ESCAPE_MPH && !isDustingZombies) {
-          triggerEscapeSequence("✓ ESCAPED", "LEFT IN THE DUST!");
+          if (!escapeStreakStartTime) escapeStreakStartTime = Date.now();
+          if (Date.now() - escapeStreakStartTime >= ESCAPE_SUSTAIN_MS) {
+            escapeStreakStartTime = null;
+            triggerEscapeSequence("✓ ESCAPED", "LEFT IN THE DUST!");
+          }
           return;
+        } else {
+          escapeStreakStartTime = null;
         }
 
         if (totalSec <= 0 && !isDustingZombies) {
@@ -837,6 +870,7 @@
       isSprinterActive = false;
       isDustingZombies = false;
       isUsingWeapon = false;
+      escapeStreakStartTime = null;
 
       inventory = [];
       renderInventory();
@@ -844,18 +878,17 @@
       musicChase.pause();
       musicChase.currentTime = 0;
 
-      // Stop runner video
+      // Kill active approach video
       runVideo.className = '';
       runVideo.style.display = 'none';
       isRunPlaying = false;
 
-      // Pop up the Jumpscare Video & Play Bite Sound
+      // Pop Bite WebM with Screen Blend
       biteVideo.style.display = 'block';
       biteVideo.currentTime = 0;
       biteVideo.play().catch(e => console.warn('Bite video error:', e));
       playSound(sfxBite);
 
-      // Play evil voice right as the bite video wraps up
       biteVideo.onended = () => {
         biteVideo.style.display = 'none';
         playSound(voiceEvil);
@@ -887,6 +920,7 @@
       isUsingWeapon = false;
       hordeDeadline = null;
       sprinterDeadline = null;
+      escapeStreakStartTime = null;
       alertBox.style.display = "none";
       musicChase.pause();
       musicChase.currentTime = 0;

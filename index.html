@@ -97,6 +97,7 @@
       align-items: center;
       padding: 10px 8px;
       z-index: 100;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
 
     .hud-title {
@@ -277,7 +278,7 @@
     }
 
     @keyframes popIn {
-      from { transform: translateY(8px) scale(0.92); opacity: 1; }
+      from { transform: translateY(8px) scale(0.92); opacity: 0; }
       to { transform: translateY(0) scale(1); opacity: 1; }
     }
 
@@ -291,11 +292,9 @@
 
   <!-- Fullscreen Video/Canvas Layer -->
   <div id="video-layer">
-    <!-- Raw invisible video sources (keeps your current webm files) -->
     <video id="zombie-run-vid" class="hidden-source-vid" muted playsinline preload="auto" src="zombie_run.webm"></video>
     <video id="zombie-bite-vid" class="hidden-source-vid" muted playsinline preload="auto" src="zombie_bite.webm"></video>
 
-    <!-- Visible Keyed Canvases that strip out black background -->
     <canvas id="zombie-run-canvas"></canvas>
     <canvas id="zombie-bite-canvas"></canvas>
   </div>
@@ -342,7 +341,11 @@
     const SPRINTER_ESCAPE_MPH = 17.0;
     const RESTART_TRIGGER_MPH = 14.0;
     const RADAR_MAX_METERS = 100.0;
-    const ESCAPE_SUSTAIN_MS = 1800; // 1.8s sustained sprint filter
+    const ESCAPE_SUSTAIN_MS = 1800;
+
+    // Cornered / Slow Traffic Mechanic Constants
+    const SLOW_SPEED_THRESHOLD_MPH = 4.0;
+    const SLOW_TIME_LIMIT_MS = 45 * 1000;
 
     let player = { lat: 42.3314, lon: -83.0458, speedMph: 0, headingRad: 0, targetHeading: 0 };
     let zombies = [];
@@ -353,7 +356,12 @@
     let isZombieState = false;
     let isDustingZombies = false;
     let escapeStreakStartTime = null;
-    let hasFirstZombieSpawned = false; // Start condition gate
+    let hasFirstZombieSpawned = false;
+
+    // Cornered State Tracking
+    let slowStartTime = null;
+    let isCornered = false;
+    let spawnTimeoutId = null;
 
     // --- 5-SLOT INVENTORY SYSTEM ---
     const WEAPON_POOL = [
@@ -368,6 +376,7 @@
 
     const radarCanvas = document.getElementById('radar');
     const ctx = radarCanvas.getContext('2d');
+    const hudBox = document.getElementById('hud-container');
     const speedEl = document.getElementById('speed-val');
     const countEl = document.getElementById('zombie-count');
     const alertBox = document.getElementById('stream-alert-box');
@@ -485,13 +494,12 @@
       const frame = targetCtx.getImageData(0, 0, targetCanvas.width, targetCanvas.height);
       const len = frame.data.length;
 
-      // Key out dark/black pixels: if R, G, B are all low, make transparent
       for (let i = 0; i < len; i += 4) {
         const r = frame.data[i];
         const g = frame.data[i + 1];
         const b = frame.data[i + 2];
         if (r < 35 && g < 35 && b < 35) {
-          frame.data[i + 3] = 0; // Alpha = 0 (100% transparent)
+          frame.data[i + 3] = 0;
         }
       }
       targetCtx.putImageData(frame, 0, 0);
@@ -576,7 +584,6 @@
     if ('geolocation' in navigator) {
       navigator.geolocation.watchPosition(
         (pos) => {
-          // Reject fixes with poor horizontal accuracy (> 14 meters)
           if (pos.coords.accuracy && pos.coords.accuracy > 14) {
             return;
           }
@@ -615,7 +622,6 @@
             candidateMph = calculatedMph;
           }
 
-          // Acceleration clamp: physical velocity won't jump > 6.5 MPH in 1s
           if (timeDeltaSec > 0 && player.speedMph > 0) {
             const maxPhysJump = Math.max(3.0, timeDeltaSec * 6.5);
             if (candidateMph > player.speedMph + maxPhysJump) {
@@ -666,7 +672,7 @@
 
     function addRandomWeapon() {
       if (isZombieState) return;
-      if (!hasFirstZombieSpawned) return; // Block weapon spawns until the game officially starts
+      if (!hasFirstZombieSpawned) return;
 
       if (inventory.length >= 5) {
         showToast('⚠ INVENTORY FULL!', '#FFE600', '#FFE600');
@@ -731,11 +737,11 @@
       }, 10000);
     }
 
-    // --- ZOMBIE SPAWNER ---
+    // --- ZOMBIE SPAWNER WITH DYNAMIC CORNERED TIMING ---
     function spawnZombie(forceSprinter = false) {
       if (isZombieState) return;
 
-      hasFirstZombieSpawned = true; // Permanently unlocks drops for the session
+      hasFirstZombieSpawned = true;
 
       const canSprinter = !isHordeActive && !isSprinterActive;
       const isSprinter = canSprinter && (forceSprinter || (Math.random() < 0.03));
@@ -770,16 +776,28 @@
     }
 
     function triggerHordeSpawn() {
-      const isPack = Math.random() < 0.10;
-      const count = isPack ? 3 : 1;
+      if (isZombieState) return;
+
+      const packChance = isCornered ? 0.35 : 0.10;
+      const isPack = Math.random() < packChance;
+      const count = isPack ? (isCornered ? 3 : 2) : 1;
+
       for (let i = 0; i < count; i++) {
         spawnZombie();
       }
     }
 
     function scheduleSpawn() {
-      const nextSpawnSec = 25 + Math.random() * 45;
-      setTimeout(() => {
+      if (spawnTimeoutId) clearTimeout(spawnTimeoutId);
+
+      let nextSpawnSec;
+      if (isCornered) {
+        nextSpawnSec = 4 + Math.random() * 4; // 4-8s hyper spawns when cornered
+      } else {
+        nextSpawnSec = 25 + Math.random() * 45; // 25-70s normal
+      }
+
+      spawnTimeoutId = setTimeout(() => {
         triggerHordeSpawn();
         scheduleSpawn();
       }, nextSpawnSec * 1000);
@@ -855,10 +873,30 @@
 
     function handleGameState() {
       if (isZombieState) {
+        slowStartTime = null;
+        isCornered = false;
         if (player.speedMph >= RESTART_TRIGGER_MPH) {
           resetBoard();
         }
         return;
+      }
+
+      // CORNERED / SLOW SPEED TRACKER (< 4 MPH for > 45s)
+      if (player.speedMph < SLOW_SPEED_THRESHOLD_MPH) {
+        if (!slowStartTime) {
+          slowStartTime = Date.now();
+        } else if (!isCornered && (Date.now() - slowStartTime >= SLOW_TIME_LIMIT_MS)) {
+          isCornered = true;
+          showToast("⚠ CORNERED! GET MOVING!", "#FF0033", "#FFFFFF");
+          scheduleSpawn();
+        }
+      } else {
+        if (isCornered) {
+          isCornered = false;
+          showToast("✓ BREAKING AWAY!", "#00FF66", "#00FF66");
+          scheduleSpawn();
+        }
+        slowStartTime = null;
       }
 
       if (isSprinterActive) {
@@ -944,6 +982,8 @@
       isSprinterActive = false;
       isDustingZombies = false;
       isUsingWeapon = false;
+      isCornered = false;
+      slowStartTime = null;
       escapeStreakStartTime = null;
 
       inventory = [];
@@ -976,6 +1016,8 @@
       isDustingZombies = false;
       isUsingWeapon = false;
       hasFirstZombieSpawned = false;
+      isCornered = false;
+      slowStartTime = null;
       hordeDeadline = null;
       sprinterDeadline = null;
       escapeStreakStartTime = null;
@@ -991,10 +1033,21 @@
 
       inventory = [];
       renderInventory();
+      scheduleSpawn();
     }
 
     // High-DPI Radar Render
     function renderRadar(timeSec) {
+      // Dynamic Visual Alert on Radar Border when Cornered
+      if (isCornered && !isZombieState) {
+        const flash = Math.sin(timeSec * 8) > 0;
+        hudBox.style.borderColor = flash ? "#FF0033" : "#330000";
+        hudBox.style.boxShadow = flash ? "0 0 35px rgba(255, 0, 51, 0.9)" : "0 0 10px rgba(0, 0, 0, 0.9)";
+      } else {
+        hudBox.style.borderColor = "#00FF66";
+        hudBox.style.boxShadow = "0 0 25px rgba(0, 0, 0, 1), 0 0 14px rgba(0, 255, 102, 0.6)";
+      }
+
       ctx.clearRect(0, 0, displaySize, displaySize);
       const cx = displaySize / 2;
       const cy = displaySize / 2;
@@ -1014,15 +1067,15 @@
       ctx.lineTo(cx, 16);
       ctx.stroke();
 
-      scanAngle += 0.045;
-      ctx.strokeStyle = "#00FF66";
+      scanAngle += (isCornered ? 0.085 : 0.045);
+      ctx.strokeStyle = isCornered ? "#FF0033" : "#00FF66";
       ctx.lineWidth = 2.2;
       ctx.beginPath();
       ctx.moveTo(cx, cy);
       ctx.lineTo(cx + Math.cos(scanAngle) * (cx - 8), cy + Math.sin(scanAngle) * (cy - 8));
       ctx.stroke();
 
-      ctx.fillStyle = isZombieState ? "#FF0033" : "#00E5FF";
+      ctx.fillStyle = isZombieState ? "#FF0033" : (isCornered ? "#FFE600" : "#00E5FF");
       ctx.shadowColor = ctx.fillStyle;
       ctx.shadowBlur = 10;
       ctx.beginPath();
